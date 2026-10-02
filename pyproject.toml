@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "behavior-tree-widget"
+dynamic = ["version"]
+description = "A PySide6 widget to build and execute py_trees behavior trees graphically"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.5",
+    "py_trees>=2.2.1",
+]
+keywords = ["behavior tree", "py_trees", "PySide6", "Qt", "widget", "robotics"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Developers",
+    "Environment :: X11 Applications :: Qt",
+    "Topic :: Software Development :: Widget Sets",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-qt>=4.2", "pytest-timeout>=2"]
+
+[project.gui-scripts]
+behavior-tree-widget-demo = "behavior_tree_widget.demo:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "behavior_tree_widget.__version__" }
+
+[tool.setuptools.package-data]
+behavior_tree_widget = ["ui/*.ui", "py.typed"]
+
+[tool.pytest.ini_options]
+qt_api = "pyside6"
+testpaths = ["tests"]
+timeout = 120
