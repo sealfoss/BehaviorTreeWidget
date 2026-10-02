@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import functools
 import json
 import logging
@@ -12,9 +13,10 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import shiboken6
-from PySide6.QtCore import QCoreApplication, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QByteArray, QCoreApplication, QMimeData, QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFrame,
@@ -27,14 +29,17 @@ from PySide6.QtWidgets import (
 
 from ._ui import load_ui
 from .blackboard import BlackboardStore, BlackboardView
-from .canvas import TreeView, clamp_to_scene
+from .blackboard_nodes import BlackboardValueNodeWidget, EvaluationNodeWidget, SetNodeWidget
+from .canvas import TreeView, clamp_to_scene, nearest_free_offset
 from .config import ConfigureDialog, TreeConfig
 from .execution import ExecutionState, LeafBehaviour, TreeExecutor
 from .nodes import (
     COMPOSITE_TYPES,
+    NEGATION,
     SEQUENCE,
     CompositeNodeWidget,
     LeafNodeWidget,
+    NegationNodeWidget,
     NodeWidget,
     RootNodeWidget,
     UnknownLeafNodeWidget,
@@ -54,8 +59,44 @@ log = logging.getLogger("behavior_tree_widget")
 
 __all__ = ["BehaviorTreeWidget", "register_node_type", "registered_node_types"]
 
-RESERVED_TYPE_NAMES = frozenset({"Root", *COMPOSITE_TYPES})
+#: Leaf node types every BehaviorTreeWidget offers, by type name.
+BUILTIN_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {"Evaluation": EvaluationNodeWidget, "Set": SetNodeWidget}
+#: Node types with children offered by the add-node menu, in menu order.
+PARENT_TYPES = (*COMPOSITE_TYPES, NEGATION)
+RESERVED_TYPE_NAMES = frozenset({"Root", *PARENT_TYPES, *BUILTIN_LEAF_TYPES})
 BUTTON_NAMES = ("Execute", "Pause", "Stop", "Reset", "Configure", "Save", "Load", "New")
+LOOP_CHECKBOX_NAME = "LoopExecution"
+#: Clipboard format of copied nodes: JSON holding "nodes" and "connections" as in tree files.
+CLIPBOARD_MIME_TYPE = "application/x-behavior-tree-widget-nodes"
+CLIPBOARD_FORMAT = "behavior_tree_widget_nodes"
+#: Qt platforms with a system clipboard (others, e.g. offscreen, keep it inside the process).
+NATIVE_CLIPBOARD_PLATFORMS = frozenset({"windows", "cocoa", "xcb", "wayland", "android", "ios"})
+_clipboard_guard_installed = False
+
+
+def _drop_copied_nodes() -> None:
+    """At exit: remove copied nodes from a clipboard that lives inside the process."""
+    if QGuiApplication.instance() is None:
+        return
+    try:
+        clipboard = QGuiApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime is not None and mime.hasFormat(CLIPBOARD_MIME_TYPE):
+            clipboard.clear()
+    except RuntimeError:  # the application is being destroyed
+        pass
+
+
+def _guard_clipboard_at_exit() -> None:
+    """Platforms without a system clipboard (offscreen, minimal, ...) keep it inside the process,
+    and PySide6 can crash while destroying such a clipboard holding copied nodes at exit (e.g. at
+    the end of a test run). The nodes are dropped from it at exit; they could not outlive the
+    process anyway. A system clipboard keeps them, so they can still be pasted after exit."""
+    global _clipboard_guard_installed
+    if _clipboard_guard_installed or QGuiApplication.platformName().split("-")[0] in NATIVE_CLIPBOARD_PLATFORMS:
+        return
+    atexit.register(_drop_copied_nodes)
+    _clipboard_guard_installed = True
 # Text-presentation symbols (U+FE0E) instead of the colour emoji of the .ui file, so disabled
 # buttons are drawn greyed out like any other text.
 BUTTON_GLYPHS = {
@@ -90,12 +131,12 @@ def _type_name_of(cls: type) -> str:
 def _validate_leaf_class(cls: Any) -> str:
     if not isinstance(cls, type) or not issubclass(cls, LeafNodeWidget):
         raise TypeError(f"node types must be subclasses of LeafNodeWidget, not {cls!r}")
-    if cls is LeafNodeWidget or issubclass(cls, UnknownLeafNodeWidget):
+    if cls in (LeafNodeWidget, BlackboardValueNodeWidget) or issubclass(cls, UnknownLeafNodeWidget):
         raise TypeError(f"{cls.__name__} cannot be registered; register a subclass that implements OnRun")
     name = _type_name_of(cls)
     if not isinstance(name, str) or not name:
         raise ValueError(f"{cls.__name__}.TYPE_NAME must be a non-empty string")
-    if name in RESERVED_TYPE_NAMES:
+    if name in RESERVED_TYPE_NAMES and BUILTIN_LEAF_TYPES.get(name) is not cls:
         raise ValueError(f"{name!r} is a built-in node type name; set a different TYPE_NAME on {cls.__name__}")
     return name
 
@@ -185,6 +226,7 @@ class BehaviorTreeWidget(QTabWidget):
     executionFinished = Signal(str)  # "Succeeded" / "Failed" (run-once mode)
     nodeStatusChanged = Signal(object, str)  # node, "Ready"/"Running"/"Succeeded"/"Failed"
     nodeError = Signal(object, str)  # node, error message
+    nodeSelectionChanged = Signal()  # the selected nodes changed (GetSelectedNodes)
 
     TREE_TAB_TITLE = "Behavior Tree"
     BLACKBOARD_TAB_TITLE = "Blackboard"
@@ -195,7 +237,7 @@ class BehaviorTreeWidget(QTabWidget):
         super().__init__(parent)
         self.setObjectName("BehaviorTreeWidget")
         self._gui_thread = threading.get_ident()
-        self._node_types: dict[str, type[LeafNodeWidget]] = dict(_global_node_types)
+        self._node_types: dict[str, type[LeafNodeWidget]] = {**BUILTIN_LEAF_TYPES, **_global_node_types}
         self._config = TreeConfig()
         self._file_path: str | None = None
         self._tree_loaded = False
@@ -228,6 +270,9 @@ class BehaviorTreeWidget(QTabWidget):
                 font = QFont(button.font())
                 font.setFamilies(SYMBOL_FONTS + font.families())
                 button.setFont(font)
+        self._loop_box: QCheckBox = self._tree_page.findChild(QCheckBox, LOOP_CHECKBOX_NAME)
+        if self._loop_box is None:
+            raise RuntimeError(f"BehaviorTreeView.ui has no QCheckBox named {LOOP_CHECKBOX_NAME!r}")
         self.addTab(self._tree_page, self.TREE_TAB_TITLE)
 
         # ---- "Blackboard" tab (BlackBoardView.ui)
@@ -252,9 +297,12 @@ class BehaviorTreeWidget(QTabWidget):
         buttons["Save"].clicked.connect(self._on_save_clicked)
         buttons["Load"].clicked.connect(self._on_load_clicked)
         buttons["New"].clicked.connect(self._on_new_clicked)
+        self._loop_box.setChecked(self._config.repeat)
+        self._loop_box.toggled.connect(self.SetLoopExecution)
 
         self._view.modified.connect(self._mark_modified)
         self._view.nodeAdded.connect(self._on_node_added)
+        self._view.nodeSelectionChanged.connect(self.nodeSelectionChanged)
         self._view.shown.connect(self._on_view_shown)
         self._view.navigated.connect(self._on_view_navigated)
         self._blackboard_view.entryEdited.connect(self._on_blackboard_edited)
@@ -288,29 +336,39 @@ class BehaviorTreeWidget(QTabWidget):
         _register(self._node_types, cls)
 
     def GetNodeTypes(self) -> list[str]:
-        """Names of every node type that can be added: Sequence, Selector and the leaf types."""
-        return [*COMPOSITE_TYPES, *sorted(self._node_types)]
+        """Names of every node type that can be added: Sequence, Selector, Negation, the
+        built-in leaf types Evaluation and Set, then the registered leaf types (sorted)."""
+        registered = sorted(name for name in self._node_types if name not in BUILTIN_LEAF_TYPES)
+        return [*PARENT_TYPES, *BUILTIN_LEAF_TYPES, *registered]
 
     def GetNodeType(self, type_name: str) -> type[LeafNodeWidget] | None:
-        """The leaf class registered as ``type_name`` (None for unknown or built-in types)."""
+        """The leaf class of ``type_name``, including the built-in Evaluation and Set (None for
+        unknown types and for Sequence, Selector, Negation and Root)."""
         return self._node_types.get(type_name)
 
     def _node_menu_entries(self) -> list[tuple[str, str, str]]:
         """``(group, type_name, label)`` of every type offered by the add-node menu."""
-        entries = [("composite", name, name) for name in COMPOSITE_TYPES]
+        entries = [("composite", name, name) for name in PARENT_TYPES]
         leaves = []
         for name, cls in self._node_types.items():
             title = cls._title if isinstance(cls._title, str) and cls._title else cls.__name__
             leaves.append((title, name))
         titles = [title for title, _ in leaves]
+
+        def label(title: str, name: str) -> str:
+            return title if titles.count(title) == 1 or name in BUILTIN_LEAF_TYPES else f"{title} ({name})"
+
+        entries += [("blackboard", name, label(title, name)) for title, name in leaves if name in BUILTIN_LEAF_TYPES]
         for title, name in sorted(leaves, key=lambda pair: (pair[0].lower(), pair[1])):
-            label = title if titles.count(title) == 1 else f"{title} ({name})"
-            entries.append(("leaf", name, label))
+            if name not in BUILTIN_LEAF_TYPES:
+                entries.append(("leaf", name, label(title, name)))
         return entries
 
     def _create_node(self, type_name: str) -> NodeWidget:
         if type_name in COMPOSITE_TYPES:
             return CompositeNodeWidget(type_name, memory=self._config.default_memory)
+        if type_name == NEGATION:
+            return NegationNodeWidget()
         cls = self._node_types.get(type_name)
         if cls is None:
             raise ValueError(f"unknown node type {type_name!r}")
@@ -375,6 +433,57 @@ class BehaviorTreeWidget(QTabWidget):
         """Remove the connection between ``child`` and its parent. Raises RuntimeError while executing."""
         self._require_gui_thread("Disconnect")
         self._view.disconnect_node(child)
+
+    # ================================================================== selection / clipboard API
+    def GetSelectedNodes(self) -> list[NodeWidget]:
+        """The selected nodes (in the order they were added)."""
+        return self._view.selected_nodes()
+
+    def SelectNodes(self, nodes: Iterable[NodeWidget], add: bool = False) -> None:
+        """Select ``nodes`` (``add`` keeps the current selection; ``SelectNodes([])`` clears it)."""
+        self._require_gui_thread("SelectNodes")
+        self._view.select_nodes(nodes, add=add)
+
+    def CopyNodes(self, nodes: Iterable[NodeWidget] | None = None) -> bool:
+        """Copy ``nodes`` (default: the selected nodes) to the clipboard, as Ctrl+C does.
+
+        The connections between the copied nodes are copied too. The Root is never copied.
+        Returns False when there was nothing to copy (the clipboard is then left unchanged).
+        """
+        self._require_gui_thread("CopyNodes")
+        return self._copy_nodes(self._view.selected_nodes() if nodes is None else nodes)
+
+    def PasteNodes(self) -> list[NodeWidget]:
+        """Paste the nodes on the clipboard, as Ctrl+V does, and return them (they become the selection).
+
+        The copies keep their arrangement and the connections between them, and are placed
+        in the free area nearest to where the copied nodes were. Returns ``[]`` when the
+        clipboard holds no nodes.
+
+        Raises:
+            RuntimeError: the tree is executing.
+        """
+        self._require_gui_thread("PasteNodes")
+        self._view._check_unlocked()
+        return self._paste_nodes()
+
+    # ================================================================== loop execution
+    def GetLoopExecution(self) -> bool:
+        """True if the tree runs again each time the root returns (the "Loop Execution" check box)."""
+        return self._config.repeat
+
+    def SetLoopExecution(self, loop: bool) -> None:
+        """Check or uncheck "Loop Execution" (``TreeConfig.repeat``); saved with the tree.
+
+        Looping starts the tree again on the tick after the root returns, keeping the
+        blackboard and node values as they are. Unchecked, execution stops once the root
+        returns. A change applies to a running tree at once.
+        """
+        self._require_gui_thread("SetLoopExecution")
+        config = self._config.copy()
+        config.repeat = bool(loop)
+        self.SetConfig(config)
+        self._sync_loop_box()  # also when unchanged (e.g. a click while the tree cannot change)
 
     # ================================================================== blackboard API
     def GetEntry(self, name: str) -> Any:
@@ -470,6 +579,7 @@ class BehaviorTreeWidget(QTabWidget):
         if config != self._config:
             self._config = config
             self._executor.set_interval(config.tick_interval_ms)
+            self._sync_loop_box()
             self._mark_modified()
 
     def Configure(self) -> None:
@@ -669,6 +779,10 @@ class BehaviorTreeWidget(QTabWidget):
         """One of the execution buttons: Execute, Pause, Stop, Reset, Configure, Save, Load, New."""
         return self._buttons[name]
 
+    def loopExecutionCheckBox(self) -> QCheckBox:  # noqa: N802
+        """The "Loop Execution" check box of the execution controls."""
+        return self._loop_box
+
     # ================================================================== internals: dialogs
     def _run_dialog(self, dialog: QDialog) -> bool:
         """Show a modal dialog (separate method so tests can drive dialogs)."""
@@ -738,6 +852,17 @@ class BehaviorTreeWidget(QTabWidget):
         self._buttons["Load"].setEnabled(True)
         self._buttons["New"].setEnabled(True)
         self._buttons["Execute"].setToolTip("Resume execution" if state is ExecutionState.PAUSED else "Execute the tree")
+        self._loop_box.setEnabled(loaded)
+
+    def _sync_loop_box(self) -> None:
+        """Make the Loop Execution check box show ``TreeConfig.repeat`` (without reacting to it)."""
+        box = self._loop_box
+        if shiboken6.isValid(box) and box.isChecked() != self._config.repeat:
+            blocked = box.blockSignals(True)
+            try:
+                box.setChecked(self._config.repeat)
+            finally:
+                box.blockSignals(blocked)
 
     def _update_window_title(self) -> None:
         if self._file_path:
@@ -832,71 +957,7 @@ class BehaviorTreeWidget(QTabWidget):
         ``quiet`` suppresses the log messages (used for internal snapshots); ``check_raw`` also
         skips data of unknown node types that json cannot write."""
         problems = problems if problems is not None else []
-        warn = (lambda message: None) if quiet else log.warning
-
-        def writable(node: NodeWidget, what: str, value: Any) -> bool:
-            if not check_raw or _json_writable(value):
-                return True
-            message = f"{what} of node {node.GetTitle()!r} was not saved: it is nested too deeply to be written"
-            warn(message)
-            problems.append(message)
-            return False
-        nodes = []
-        for node in self._view.nodes():
-            pos = node._item.pos()
-            entry: dict[str, Any] = {
-                "id": node.GetId(),
-                "type": node.GetTypeName(),
-                "title": node.GetTitle(),
-                "x": round(pos.x(), 2),
-                "y": round(pos.y(), 2),
-            }
-            try:
-                extra = node._to_dict()
-            except Exception as error:  # noqa: BLE001 - user node data
-                problems.append(f"node {node.GetTitle()!r}: its data could not be read ({error})")
-                extra = {}
-            if isinstance(extra.get("fields"), dict):
-                fields = {}
-                for key, value in extra["fields"].items():
-                    if not isinstance(key, str):
-                        message = f"field {key!r} of node {node.GetTitle()!r} was not saved: field names must be str"
-                        warn(message)
-                        problems.append(message)
-                        continue
-                    try:
-                        fields[key] = encode_value(value)
-                    except TypeError as error:
-                        message = f"field {key!r} of node {node.GetTitle()!r} was not saved: {error}"
-                        warn(message)
-                        problems.append(message)
-                extra["fields"] = fields
-                selections = extra.get("field_selections")
-                if isinstance(selections, dict):
-                    extra["field_selections"] = {k: v for k, v in selections.items() if k in fields}
-            if isinstance(node, UnknownLeafNodeWidget):
-                # Keep what the placeholder could not interpret exactly as it was read.
-                extra.setdefault("fields", {}).update(
-                    {key: value for key, value in node._raw_fields.items() if writable(node, f"field {key!r}", value)}
-                )
-                selections = {  # as saved ...
-                    key: value
-                    for key, value in node._raw_selections.items()
-                    if writable(node, f"selection of field {key!r}", value)
-                }
-                current = extra.get("field_selections") or {}
-                for key in node._edited_selections:  # ... except those the user changed
-                    if key in current:
-                        selections[key] = current[key]
-                if selections:
-                    extra["field_selections"] = selections
-                else:
-                    extra.pop("field_selections", None)
-                for key, value in node._raw_extra.items():
-                    if key not in extra and writable(node, f"data {key!r}", value):
-                        extra[key] = value
-            entry.update(extra)
-            nodes.append(entry)
+        nodes = [self._node_data(node, problems, quiet, check_raw) for node in self._view.nodes()]
         connections = []
         for node in self._view.nodes():
             for child in node.GetChildren():
@@ -911,6 +972,191 @@ class BehaviorTreeWidget(QTabWidget):
             "connections": connections,
             "blackboard": self._blackboard.to_list(problems, quiet=quiet),
         }
+
+    @staticmethod
+    def _node_data(node: NodeWidget, problems: list[str], quiet: bool = False, check_raw: bool = False) -> dict:
+        """One node as JSON-compatible data (an item of a tree file's "nodes" list); see _tree_data."""
+        warn = (lambda message: None) if quiet else log.warning
+
+        def writable(what: str, value: Any) -> bool:
+            if not check_raw or _json_writable(value):
+                return True
+            message = f"{what} of node {node.GetTitle()!r} was not saved: it is nested too deeply to be written"
+            warn(message)
+            problems.append(message)
+            return False
+
+        pos = node._item.pos()
+        entry: dict[str, Any] = {
+            "id": node.GetId(),
+            "type": node.GetTypeName(),
+            "title": node.GetTitle(),
+            "x": round(pos.x(), 2),
+            "y": round(pos.y(), 2),
+        }
+        try:
+            extra = node._to_dict()
+        except Exception as error:  # noqa: BLE001 - user node data
+            problems.append(f"node {node.GetTitle()!r}: its data could not be read ({error})")
+            extra = {}
+        if isinstance(extra.get("fields"), dict):
+            fields = {}
+            for key, value in extra["fields"].items():
+                if not isinstance(key, str):
+                    message = f"field {key!r} of node {node.GetTitle()!r} was not saved: field names must be str"
+                    warn(message)
+                    problems.append(message)
+                    continue
+                try:
+                    fields[key] = encode_value(value)
+                except TypeError as error:
+                    message = f"field {key!r} of node {node.GetTitle()!r} was not saved: {error}"
+                    warn(message)
+                    problems.append(message)
+            extra["fields"] = fields
+            selections = extra.get("field_selections")
+            if isinstance(selections, dict):
+                extra["field_selections"] = {k: v for k, v in selections.items() if k in fields}
+        if isinstance(node, UnknownLeafNodeWidget):
+            # Keep what the placeholder could not interpret exactly as it was read.
+            extra.setdefault("fields", {}).update(
+                {key: value for key, value in node._raw_fields.items() if writable(f"field {key!r}", value)}
+            )
+            selections = {  # as saved ...
+                key: value
+                for key, value in node._raw_selections.items()
+                if writable(f"selection of field {key!r}", value)
+            }
+            current = extra.get("field_selections") or {}
+            for key in node._edited_selections:  # ... except those the user changed
+                if key in current:
+                    selections[key] = current[key]
+            if selections:
+                extra["field_selections"] = selections
+            else:
+                extra.pop("field_selections", None)
+            for key, value in node._raw_extra.items():
+                if key not in extra and writable(f"data {key!r}", value):
+                    extra[key] = value
+        entry.update(extra)
+        return entry
+
+    # ================================================================== internals: copy / paste
+    def _copy_nodes(self, nodes: Iterable[NodeWidget]) -> bool:
+        """Put ``nodes`` (except the Root) and the connections between them on the clipboard."""
+        wanted = set(nodes)
+        copied = [node for node in self._view.nodes() if node in wanted and not isinstance(node, RootNodeWidget)]
+        if not copied:
+            return False
+        ids = {node.GetId() for node in copied}
+        connections = [
+            {"parent": node.GetId(), "child": child.GetId()}
+            for node in copied
+            for child in node.GetChildren()
+            if child.GetId() in ids
+        ]
+        text = None
+        for check_raw in (False, True):
+            # As when saving: data of unknown node types that json cannot write is left out.
+            problems: list[str] = []
+            data = {
+                "format": CLIPBOARD_FORMAT,
+                "version": FORMAT_VERSION,
+                "nodes": [self._node_data(node, problems, quiet=True, check_raw=check_raw) for node in copied],
+                "connections": connections,
+            }
+            try:
+                text = json.dumps(data, ensure_ascii=True)
+                break
+            except RecursionError:
+                continue
+        if text is None:
+            log.warning("the selected nodes could not be copied")
+            return False
+        for problem in problems:
+            log.warning("copy: %s", problem)  # e.g. a field value that cannot be written as JSON
+        mime = QMimeData()
+        mime.setData(CLIPBOARD_MIME_TYPE, QByteArray(text.encode("ascii")))
+        QGuiApplication.clipboard().setMimeData(mime)
+        _guard_clipboard_at_exit()
+        return True
+
+    @staticmethod
+    def _clipboard_data() -> dict | None:
+        """The nodes on the clipboard (a checked :meth:`_copy_nodes` document), or None."""
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime is None or not mime.hasFormat(CLIPBOARD_MIME_TYPE):
+            return None
+        try:
+            data = json.loads(bytes(mime.data(CLIPBOARD_MIME_TYPE)).decode("utf-8"))
+        except (ValueError, RecursionError) as error:  # also UnicodeDecodeError
+            log.warning("the clipboard holds damaged node data: %s", error)
+            return None
+        version = data.get("version") if isinstance(data, dict) else None
+        if (
+            not isinstance(data, dict)
+            or data.get("format") != CLIPBOARD_FORMAT
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or not 1 <= version <= FORMAT_VERSION
+            or not isinstance(data.get("nodes"), list)
+            or not isinstance(data.get("connections", []), list)
+        ):
+            log.warning("the clipboard holds node data this version cannot read")
+            return None
+        return data
+
+    def _paste_nodes(self) -> list[NodeWidget]:
+        data = self._clipboard_data()
+        if data is None:
+            return []
+        # New ids for the copies; the Root is never pasted.
+        ids: dict[str, str] = {}
+        items = []
+        for item in data["nodes"]:
+            if not isinstance(item, dict) or item.get("type") == "Root":
+                continue
+            old = item.get("id")
+            if isinstance(old, str) and old not in ids:
+                ids[old] = uuid.uuid4().hex
+                items.append({**item, "id": ids[old]})
+        connections = [
+            {"parent": ids[item["parent"]], "child": ids[item["child"]]}
+            for item in data.get("connections", [])
+            if isinstance(item, dict) and item.get("parent") in ids and item.get("child") in ids
+        ]
+        problems: list[str] = []
+        plan = _TreePlan()
+        try:
+            self._prepare_nodes(plan, items, problems, with_root=False)
+            self._prepare_connections(plan, connections, problems)
+        except Exception:
+            plan.discard()
+            raise
+        obstacles = [node._item.sceneBoundingRect() for node in self._view.nodes() if node._item is not None]
+        prepared, plan.nodes = plan.nodes, []
+        pasted: list[NodeWidget] = []
+        try:
+            # Added where the copied nodes were (their size is known once added), then moved
+            # together to the nearest free area.
+            for node, pos in prepared:
+                self._view.add_node(node, pos)
+                pasted.append(node)
+        except Exception:
+            for node, _ in prepared[len(pasted):]:
+                if shiboken6.isValid(node):
+                    node.deleteLater()
+            raise
+        offset = nearest_free_offset([node._item.sceneBoundingRect() for node in pasted], obstacles)
+        for node in pasted:
+            node._item.setPos(clamp_to_scene(node._item.pos() + offset)[0])
+        by_id = {node.GetId(): node for node in pasted}
+        for parent_id, child_id in plan.connections:
+            self._view.connect_nodes(by_id[parent_id], by_id[child_id])
+        self._view.select_nodes(pasted)
+        for problem in problems:
+            log.warning("paste: %s", problem)
+        return pasted
 
     def _prepare_tree(self, data: dict, problems: list[str]) -> _TreePlan:
         """Validate ``data`` and create (but do not add) its nodes. Nothing visible changes."""
@@ -933,7 +1179,9 @@ class BehaviorTreeWidget(QTabWidget):
             raise
         return plan
 
-    def _prepare_nodes(self, plan: _TreePlan, items: Any, problems: list[str]) -> None:
+    def _prepare_nodes(self, plan: _TreePlan, items: Any, problems: list[str], with_root: bool = True) -> None:
+        """Create the nodes of ``items`` into ``plan``. ``with_root`` False: no Root is created
+        (Root items are skipped and none is added when missing), as for pasted nodes."""
         seen_ids: set[str] = set()
         root_seen = False
         for index, item in enumerate(items):
@@ -952,7 +1200,7 @@ class BehaviorTreeWidget(QTabWidget):
                 problems.append(f"node {label} has no type and was skipped")
                 continue
             if type_name == "Root":
-                if root_seen:
+                if root_seen or not with_root:
                     problems.append(f"extra root node {label} was skipped")
                     continue
                 root_seen = True
@@ -960,6 +1208,8 @@ class BehaviorTreeWidget(QTabWidget):
                 node: NodeWidget = RootNodeWidget(composite if composite in COMPOSITE_TYPES else SEQUENCE)
             elif type_name in COMPOSITE_TYPES:
                 node = CompositeNodeWidget(type_name)
+            elif type_name == NEGATION:
+                node = NegationNodeWidget()
             elif type_name in self._node_types:
                 try:
                     node = self._node_types[type_name]()
@@ -1004,7 +1254,7 @@ class BehaviorTreeWidget(QTabWidget):
             if clamped:
                 problems.append(f"node {label} was outside the drawing area and was moved inside it")
             plan.nodes[-1] = (node, position)
-        if not root_seen:
+        if not root_seen and with_root:
             problems.append("the file has no root node; a new root was created")
             plan.nodes.insert(0, (RootNodeWidget(), QPointF(0.0, 0.0)))
 
@@ -1012,6 +1262,7 @@ class BehaviorTreeWidget(QTabWidget):
     def _prepare_connections(plan: _TreePlan, items: Any, problems: list[str]) -> None:
         by_id = {node.GetId(): node for node, _ in plan.nodes}
         parent_of: dict[str, str] = {}
+        child_count: dict[str, int] = {}
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 problems.append(f"connection {index} is not an object and was skipped")
@@ -1028,6 +1279,13 @@ class BehaviorTreeWidget(QTabWidget):
             if parent is child or not parent.HasChildConnections() or not child.HasParentConnection():
                 problems.append(f"connection {index} ({parent.GetTitle()!r} -> {child.GetTitle()!r}) is invalid; skipped")
                 continue
+            limit = parent.MaxChildren()
+            if limit is not None and child_count.get(parent_id, 0) >= limit:
+                problems.append(
+                    f"connection {index}: node {parent.GetTitle()!r} accepts only {limit} "
+                    f"{'child' if limit == 1 else 'children'}; skipped"
+                )
+                continue
             ancestor: str | None = parent_id
             while ancestor is not None and ancestor != child_id:
                 ancestor = parent_of.get(ancestor)
@@ -1035,6 +1293,7 @@ class BehaviorTreeWidget(QTabWidget):
                 problems.append(f"connection {index} ({parent.GetTitle()!r} -> {child.GetTitle()!r}) creates a cycle; skipped")
                 continue
             parent_of[child_id] = parent_id
+            child_count[parent_id] = child_count.get(parent_id, 0) + 1
             plan.connections.append((parent_id, child_id))
 
     def _install_plan(self, plan: _TreePlan) -> None:
@@ -1044,6 +1303,7 @@ class BehaviorTreeWidget(QTabWidget):
         self._view.clear()
         self._config = plan.config
         self._executor.set_interval(self._config.tick_interval_ms)
+        self._sync_loop_box()
         by_id: dict[str, NodeWidget] = {}
         for node, pos in plan.nodes:
             self._view.add_node(node, pos)

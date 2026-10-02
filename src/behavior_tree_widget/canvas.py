@@ -4,13 +4,17 @@ Nodes are :class:`~behavior_tree_widget.nodes.NodeWidget` instances embedded in 
 scene with :class:`QGraphicsProxyWidget`. All mouse gestures are interpreted by
 :class:`TreeView` itself:
 
-* press on a ParentConnection / ChildConnections label and drag -> create a connection
+* press on a ParentConnection / ChildConnections label and drag -> create a connection;
+  releasing over empty space opens the add-node menu and connects the chosen node
 * press on an input widget of a node (line edit, spin box, ...) -> normal widget input
-* press anywhere else on a node and drag -> move the node
+* press anywhere else on a node -> select it; drag -> move it (with the other
+  selected nodes when it is selected); Ctrl + click toggles, Shift + click adds it
 * press on empty space or on a connection line and drag (or middle button
-  anywhere) -> pan the view
+  anywhere) -> pan the view; a click there deselects the nodes
+* Ctrl / Shift + drag on empty space -> select the nodes touched by a rectangle
 * click on a connection line -> select it (Delete/Backspace removes it); any other
   click deselects it
+* Ctrl+C / Ctrl+V -> copy / paste the selected nodes; Ctrl+A -> select every node
 * right click -> context menu (node: rename/type/memory/delete, empty: add node)
 * Ctrl + mouse wheel -> zoom
 """
@@ -18,9 +22,10 @@ scene with :class:`QGraphicsProxyWidget`. All mouse gestures are interpreted by
 from __future__ import annotations
 
 import enum
+import logging
 import math
 import weakref
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, Signal
@@ -30,6 +35,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPainterPathStroker,
@@ -41,6 +47,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsProxyWidget,
+    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QInputDialog,
@@ -65,6 +72,8 @@ from .nodes import (
 if TYPE_CHECKING:  # pragma: no cover
     from .widget import BehaviorTreeWidget
 
+log = logging.getLogger("behavior_tree_widget")
+
 SCENE_EXTENT = 100_000.0
 SCENE_MARGIN = 2_000.0  # room kept for a node's size inside the scene rect
 LINE_WIDTH = 2.5
@@ -78,6 +87,8 @@ LINE_COLOR = QColor(CONNECTION_COLORS[ConnectionState.CONNECTED])  # blue
 SELECTED_LINE_COLOR = QColor(CONNECTION_COLORS[ConnectionState.PLACING])  # green
 VALID_DRAG_COLOR = QColor(CONNECTION_COLORS[ConnectionState.PLACING])  # green
 INVALID_DRAG_COLOR = QColor(CONNECTION_COLORS[ConnectionState.DISCONNECTED])  # red
+SELECTION_COLOR = QColor("#0a84ff")  # outline of selected nodes and of the selection rectangle
+PASTE_GAP = 20.0  # minimum distance between pasted nodes and the nodes already in the view
 
 
 def clamp_to_scene(pos: QPointF) -> tuple[QPointF, bool]:
@@ -95,6 +106,73 @@ def clamp_to_scene(pos: QPointF) -> tuple[QPointF, bool]:
         clamped = clamped or bounded != value
         coordinates.append(bounded)
     return QPointF(*coordinates), clamped
+
+
+def nearest_free_offset(rects: Iterable[QRectF], obstacles: Iterable[QRectF], gap: float = PASTE_GAP) -> QPointF:
+    """The shortest offset that moves ``rects`` together (keeping their arrangement) off ``obstacles``.
+
+    Moved rectangles keep at least ``gap`` from every obstacle (exactly ``gap`` is allowed).
+    Ties prefer moving right, then down. The search is exact: an offset is blocked inside
+    the (open) rectangles where a moved rectangle would overlap an enlarged obstacle, and
+    the nearest free offset lies on an edge line of those regions, nearest lines first.
+    """
+    group = [(r.left(), r.top(), r.right(), r.bottom()) for r in rects]
+    walls = [(o.left() - gap, o.top() - gap, o.right() + gap, o.bottom() + gap) for o in obstacles]
+    blocked = [
+        (wx1 - gx2, wy1 - gy2, wx2 - gx1, wy2 - gy1)
+        for gx1, gy1, gx2, gy2 in group
+        for wx1, wy1, wx2, wy2 in walls
+    ]
+    if not any(x1 < 0.0 < x2 and y1 < 0.0 < y2 for x1, y1, x2, y2 in blocked):
+        return QPointF(0.0, 0.0)
+
+    def nearest_on_line(regions: list, value: float, vertical: bool) -> float:
+        """Free coordinate nearest to 0 on the line x = value (vertical) or y = value."""
+        spans = sorted(
+            (y1, y2) if vertical else (x1, x2)
+            for x1, y1, x2, y2 in regions
+            if (x1 < value < x2 if vertical else y1 < value < y2)
+        )
+        low = high = None  # the merged span containing 0, if any
+        for start, end in spans:
+            if high is not None and start < high:
+                high = max(high, end)
+                continue
+            if high is not None and low < 0.0 < high:
+                break  # the span containing 0 is complete
+            low, high = start, end
+        if low is None or not low < 0.0 < high:
+            return 0.0
+        return high if high <= -low else low
+
+    best: tuple | None = None
+
+    def consider(dx: float, dy: float) -> None:
+        nonlocal best
+        key = (round(math.hypot(dx, dy), 6), dx < 0.0, dy < 0.0, abs(dy))
+        if best is None or key < best[0]:
+            best = (key, dx, dy)
+
+    # The two axes give a first, usually close, candidate; only regions nearer than it matter.
+    consider(nearest_on_line(blocked, 0.0, vertical=False), 0.0)
+    consider(0.0, nearest_on_line(blocked, 0.0, vertical=True))
+    limit = best[0][0] + 1e-6
+    near = [
+        region
+        for region in blocked
+        if math.hypot(max(region[0], -region[2], 0.0), max(region[1], -region[3], 0.0)) < limit
+    ]
+    for vertical in (True, False):
+        lines = sorted({value for region in near for value in (region[0::2] if vertical else region[1::2])}, key=abs)
+        for value in lines:
+            if abs(value) > best[0][0] + 1e-6:
+                break
+            other = nearest_on_line(near, value, vertical)
+            if vertical:
+                consider(value, other)
+            else:
+                consider(other, value)
+    return QPointF(best[1], best[2])
 
 
 class _OutsideClickFilter(QObject):
@@ -174,9 +252,21 @@ class NodeItem(QGraphicsProxyWidget):
         width = 3.0 if running else 1.5
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self.view.is_node_selected(self.node):
+            # Selected: a tinted node inside a wide selection outline; the status border stays inside it.
+            tint = QColor(SELECTION_COLOR)
+            tint.setAlpha(28)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(tint)
+            painter.drawRoundedRect(self.boundingRect(), 4.0, 4.0)
+            painter.setPen(QPen(SELECTION_COLOR, 3.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(self.boundingRect().adjusted(1.5, 1.5, -1.5, -1.5), 4.0, 4.0)
+            inset = 3.0 + width / 2.0
+        else:
+            inset = width / 2.0
         painter.setPen(QPen(color, width))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        inset = width / 2.0
         painter.drawRoundedRect(self.boundingRect().adjusted(inset, inset, -inset, -inset), 4.0, 4.0)
         painter.restore()
 
@@ -293,12 +383,28 @@ class DragLineItem(QGraphicsPathItem):
             self.setPath(connection_path(cursor, source))
 
 
+class SelectionBandItem(QGraphicsRectItem):
+    """Rectangle drawn while nodes are selected by dragging over empty space."""
+
+    def __init__(self):
+        super().__init__()
+        self.setZValue(1e9)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        pen = QPen(SELECTION_COLOR, 1.0, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)  # one pixel wide at every zoom
+        self.setPen(pen)
+        fill = QColor(SELECTION_COLOR)
+        fill.setAlpha(36)
+        self.setBrush(fill)
+
+
 class _Gesture(enum.Enum):
     IDLE = 0
     PANNING = 1
     MOVING_NODE = 2
     CONNECTING = 3
     PASSTHROUGH = 4
+    SELECTING = 5
 
 
 class Hit:
@@ -331,6 +437,7 @@ class TreeView(QGraphicsView):
     connectionAdded = Signal(object, object)  # parent, child
     connectionRemoved = Signal(object, object)  # parent, child
     connectionSelectionChanged = Signal(object)  # ConnectionItem or None
+    nodeSelectionChanged = Signal()  # the selected nodes changed (see selected_nodes)
     shown = Signal()  # the view became visible
     navigated = Signal()  # the user panned or zoomed
 
@@ -362,15 +469,23 @@ class TreeView(QGraphicsView):
         self._nodes: list[NodeWidget] = []
         self._connections: dict[NodeWidget, ConnectionItem] = {}  # keyed by child node
         self._selected_connection: ConnectionItem | None = None
+        self._selected_nodes: dict[NodeWidget, None] = {}  # an ordered set
         self._locked = False
         self._z_counter = 1.0
 
         self._gesture = _Gesture.IDLE
         self._last_view_pos = QPoint()
         self._press_scene_pos = QPointF()
-        self._move_node: NodeWidget | None = None
+        self._move_node: NodeWidget | None = None  # the node grabbed by a move
         self._move_start_pos = QPointF()
+        self._move_group: list[tuple[NodeWidget, QPointF]] = []  # nodes moved with it, start positions
         self._moved = False
+        self._click_selects: NodeWidget | None = None  # a click (no drag) on it selects only it
+        self._pan_deselects = False  # a click (no drag) on empty space deselects the nodes
+        self._panned = False
+        self._band: SelectionBandItem | None = None
+        self._band_origin = QPointF()
+        self._band_base: dict[NodeWidget, None] = {}  # selection when the rectangle was started
         self._connect_source: tuple[NodeWidget, str] | None = None
         self._hover_target: tuple[NodeWidget, str] | None = None
         self._drag_line: DragLineItem | None = None
@@ -422,6 +537,39 @@ class TreeView(QGraphicsView):
     def selected_connection(self) -> ConnectionItem | None:
         return self._selected_connection
 
+    # ------------------------------------------------------------------ node selection
+    def selected_nodes(self) -> list[NodeWidget]:
+        """The selected nodes, in the order they were added to the view."""
+        return [node for node in self._nodes if node in self._selected_nodes]
+
+    def is_node_selected(self, node: NodeWidget) -> bool:
+        return node in self._selected_nodes
+
+    def select_nodes(self, nodes: Iterable[NodeWidget], add: bool = False) -> None:
+        """Select ``nodes`` (nodes not in this view are ignored); ``add`` keeps the current selection."""
+        wanted = dict.fromkeys(node for node in nodes if node in self._nodes)
+        self._set_selection({**self._selected_nodes, **wanted} if add else wanted)
+
+    def deselect_nodes(self, nodes: Iterable[NodeWidget]) -> None:
+        unwanted = set(nodes)
+        self._set_selection({node: None for node in self._selected_nodes if node not in unwanted})
+
+    def clear_node_selection(self) -> None:
+        self._set_selection({})
+
+    def select_all_nodes(self) -> None:
+        self._set_selection(dict.fromkeys(self._nodes))
+
+    def _set_selection(self, selection: dict[NodeWidget, None]) -> None:
+        changed = selection.keys() ^ self._selected_nodes.keys()
+        if not changed:
+            return
+        self._selected_nodes = selection
+        for node in changed:
+            if node._item is not None:
+                node._item.update()
+        self.nodeSelectionChanged.emit()
+
     def is_locked(self) -> bool:
         return self._locked
 
@@ -460,6 +608,7 @@ class TreeView(QGraphicsView):
         node._tree = self._owner
         self._nodes.append(node)
         self._refresh_label_states(node)
+        node._on_added_to_tree()
         self.nodeAdded.emit(node)
         self.modified.emit()
         return item
@@ -475,8 +624,12 @@ class TreeView(QGraphicsView):
     def _remove_node(self, node: NodeWidget) -> None:
         if node not in self._nodes:
             raise ValueError(f"{node!r} is not part of this view")
-        if self._move_node is node:
+        if self._move_node is node or any(moving is node for moving, _ in self._move_group):
             self._reset_gesture()
+        if node in self._selected_nodes:
+            self.deselect_nodes([node])
+        if node in self._band_base:
+            del self._band_base[node]
         if (self._connect_source and self._connect_source[0] is node) or (
             self._hover_target and self._hover_target[0] is node
         ):
@@ -498,6 +651,7 @@ class TreeView(QGraphicsView):
         """Remove every node, including the root."""
         self._reset_gesture()
         self.select_connection(None)
+        self.clear_node_selection()
         for node in list(self._nodes):
             self._remove_node(node)
 
@@ -515,7 +669,11 @@ class TreeView(QGraphicsView):
         return True
 
     def connect_nodes(self, parent: NodeWidget, child: NodeWidget) -> None:
-        """Connect ``child`` below ``parent``, replacing any previous parent of ``child``."""
+        """Connect ``child`` below ``parent``, replacing any previous parent of ``child``.
+
+        A parent that already has as many children as it accepts (see
+        ``NodeWidget.MaxChildren``, e.g. a Negation) loses its oldest child first.
+        """
         self._check_unlocked()
         if not self.can_connect(parent, child):
             raise ValueError(f"cannot connect {child!r} below {parent!r}")
@@ -523,6 +681,9 @@ class TreeView(QGraphicsView):
             return
         if child._parent is not None:
             self._disconnect(child)
+        limit = parent.MaxChildren()
+        while limit is not None and parent._children and len(parent._children) >= limit:
+            self._disconnect(parent._children[0])
         with parent._lock:
             parent._children.append(child)
         with child._lock:
@@ -652,7 +813,7 @@ class TreeView(QGraphicsView):
                 return Hit(Hit.NODE, node, widget=widget)
             if isinstance(item, ConnectionItem):
                 return Hit(Hit.CONNECTION, connection=item)
-            if isinstance(item, DragLineItem):
+            if isinstance(item, (DragLineItem, SelectionBandItem)):
                 continue
             # Any other item: a widget created by a proxied widget (e.g. a combo box popup).
             return Hit(Hit.INTERACTIVE)
@@ -695,7 +856,7 @@ class TreeView(QGraphicsView):
         """True if the mouse button driving the current gesture is still pressed."""
         if self._gesture is _Gesture.PANNING:
             return bool(buttons & (Qt.MouseButton.LeftButton | Qt.MouseButton.MiddleButton))
-        if self._gesture in (_Gesture.MOVING_NODE, _Gesture.CONNECTING):
+        if self._gesture in (_Gesture.MOVING_NODE, _Gesture.CONNECTING, _Gesture.SELECTING):
             return bool(buttons & Qt.MouseButton.LeftButton)
         return True
 
@@ -749,10 +910,13 @@ class TreeView(QGraphicsView):
             super().mousePressEvent(event)
             return
 
+        modifiers = event.modifiers()
+        toggle = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+        extend = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
         if hit.kind == Hit.CONNECTION:
             # Select the line; dragging from it pans the view (it is outside of any node).
             self.select_connection(hit.connection)
-            self._begin_pan(pos)
+            self._begin_pan(pos, deselect_on_click=True)
             event.accept()
         elif hit.kind == Hit.LABEL:
             if not self._locked:
@@ -765,10 +929,26 @@ class TreeView(QGraphicsView):
             self._gesture = _Gesture.PASSTHROUGH
             super().mousePressEvent(event)
         elif hit.kind == Hit.NODE:
-            self._begin_move(hit.node, pos)
+            if toggle or extend:
+                # Ctrl + click toggles the node in the selection, Shift + click adds it.
+                self._clear_scene_focus()
+                if toggle and self.is_node_selected(hit.node):
+                    self.deselect_nodes([hit.node])
+                else:
+                    self.select_nodes([hit.node], add=True)
+            else:
+                # Pressing a selected node keeps the selection, so dragging moves all of it.
+                selected = self.is_node_selected(hit.node)
+                if not selected:
+                    self.select_nodes([hit.node])
+                self._begin_move(hit.node, pos)
+                self._click_selects = hit.node if selected else None
+            event.accept()
+        elif toggle or extend:
+            self._begin_band(pos)
             event.accept()
         else:
-            self._begin_pan(pos)
+            self._begin_pan(pos, deselect_on_click=True)
             event.accept()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
@@ -781,6 +961,7 @@ class TreeView(QGraphicsView):
         if gesture is _Gesture.PANNING:
             delta = pos - self._last_view_pos
             if not delta.isNull():
+                self._panned = True
                 self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
                 self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
                 self.navigated.emit()
@@ -788,15 +969,20 @@ class TreeView(QGraphicsView):
             event.accept()
         elif gesture is _Gesture.MOVING_NODE:
             self._last_view_pos = pos
-            if self._move_node is not None and self._move_node._item is not None:
-                offset = self.mapToScene(pos) - self._press_scene_pos
-                if not self._moved and (abs(offset.x()) > 0 or abs(offset.y()) > 0):
-                    self._moved = True
-                self._move_node._item.setPos(self._move_start_pos + offset)
+            offset = self.mapToScene(pos) - self._press_scene_pos
+            if not self._moved and (abs(offset.x()) > 0 or abs(offset.y()) > 0):
+                self._moved = True
+            for node, start in self._move_group:
+                if node._item is not None:
+                    node._item.setPos(start + offset)
             event.accept()
         elif gesture is _Gesture.CONNECTING:
             self._last_view_pos = pos
             self._update_connecting(pos)
+            event.accept()
+        elif gesture is _Gesture.SELECTING:
+            self._last_view_pos = pos
+            self._update_band(pos)
             event.accept()
         else:
             super().mouseMoveEvent(event)
@@ -813,16 +999,30 @@ class TreeView(QGraphicsView):
             super().mouseReleaseEvent(event)
             return
         if gesture is _Gesture.PANNING and event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
+            click = self._pan_deselects and not self._panned
             self._reset_gesture()
+            if click:
+                self.clear_node_selection()  # a click on empty space (or a line) deselects the nodes
         elif gesture is _Gesture.MOVING_NODE and event.button() == Qt.MouseButton.LeftButton:
-            moved = self._moved
+            moved, clicked = self._moved, self._click_selects
             self._reset_gesture()
             if moved:
                 self.modified.emit()
+            elif clicked is not None:
+                self.select_nodes([clicked])  # a click on one of several selected nodes selects only it
         elif gesture is _Gesture.CONNECTING and event.button() == Qt.MouseButton.LeftButton:
             self._last_view_pos = pos
-            target = self._compatible_target(self.hit_test(pos))
+            hit = self.hit_test(pos)
+            target = self._compatible_target(hit)
+            if target is None and not self._locked and hit.kind in (Hit.EMPTY, Hit.CONNECTION):
+                # Released over the graph: offer the add-node menu there, connected to the source.
+                event.accept()
+                self._offer_connected_node(pos, event.globalPosition().toPoint())
+                return
             self._finish_connecting(target)
+        elif gesture is _Gesture.SELECTING and event.button() == Qt.MouseButton.LeftButton:
+            self._update_band(pos)
+            self._reset_gesture()
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
@@ -833,21 +1033,70 @@ class TreeView(QGraphicsView):
                 return
         super().mouseDoubleClickEvent(event)
 
-    def _begin_pan(self, pos: QPoint) -> None:
+    def _begin_pan(self, pos: QPoint, deselect_on_click: bool = False) -> None:
         self._clear_scene_focus()
         self._gesture = _Gesture.PANNING
         self._last_view_pos = pos
+        self._pan_deselects = deselect_on_click
+        self._panned = False
         self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def _begin_move(self, node: NodeWidget, pos: QPoint) -> None:
+        """Start moving ``node``, together with the other selected nodes if it is selected."""
         self._clear_scene_focus()
         self._gesture = _Gesture.MOVING_NODE
         self._move_node = node
         self._moved = False
         self._press_scene_pos = self.mapToScene(pos)
         self._move_start_pos = node._item.pos()
-        node._item.setZValue(self.next_z())
+        group = self.selected_nodes() if self.is_node_selected(node) else [node]
+        group = [member for member in group if member._item is not None]
+        self._move_group = [(member, QPointF(member._item.pos())) for member in group]
+        # Raise the moved nodes above the others, keeping their stacking order and the grabbed one on top.
+        for member in sorted(group, key=lambda member: (member is node, member._item.zValue())):
+            member._item.setZValue(self.next_z())
         self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def _begin_band(self, pos: QPoint) -> None:
+        """Start selecting the nodes touched by a rectangle dragged open from ``pos``."""
+        self._clear_scene_focus()
+        self._gesture = _Gesture.SELECTING
+        self._band_origin = self.mapToScene(pos)
+        self._band_base = dict(self._selected_nodes)
+        self._band = SelectionBandItem()
+        self.scene().addItem(self._band)
+        self._update_band(pos)
+
+    def _update_band(self, pos: QPoint) -> None:
+        if self._band is None:
+            return
+        rect = QRectF(self._band_origin, self.mapToScene(pos)).normalized()
+        self._band.setRect(rect)
+        touched = [
+            node
+            for node in self._nodes
+            if node._item is not None and rect.width() > 0 and rect.height() > 0
+            and node._item.sceneBoundingRect().intersects(rect)
+        ]
+        self._set_selection({**self._band_base, **dict.fromkeys(touched)})
+
+    def _offer_connected_node(self, pos: QPoint, global_pos: QPoint) -> None:
+        """End a connection drag released over the graph: show the add-node menu at ``pos``.
+
+        The menu is the one shown by a right click there; the node chosen from it is added
+        at the release point and connected to the label the drag started from. The drag
+        line stays visible while the menu is open.
+        """
+        source = self._connect_source
+        line, self._drag_line = self._drag_line, None
+        self._finish_connecting(None)
+        try:
+            if source is not None:
+                menu = self.build_add_menu(self.mapToScene(pos), connect_to=source)
+                self._exec_menu(menu, global_pos)
+        finally:
+            if line is not None and line.scene() is self.scene():
+                self.scene().removeItem(line)
 
     def _begin_connecting(self, node: NodeWidget, kind: str, pos: QPoint) -> None:
         self._clear_scene_focus()
@@ -898,9 +1147,18 @@ class TreeView(QGraphicsView):
     def _reset_gesture(self) -> None:
         if self._gesture is _Gesture.CONNECTING:
             self._finish_connecting(None)
+        if self._band is not None:
+            if self._band.scene() is self.scene():
+                self.scene().removeItem(self._band)
+            self._band = None
+        self._band_base = {}
         self._gesture = _Gesture.IDLE
         self._move_node = None
+        self._move_group = []
         self._moved = False
+        self._click_selects = None
+        self._pan_deselects = False
+        self._panned = False
         self.viewport().unsetCursor()
 
     def is_connecting(self) -> bool:
@@ -910,6 +1168,31 @@ class TreeView(QGraphicsView):
         return self._drag_line
 
     # ================================================================== keyboard / wheel
+    @staticmethod
+    def _edit_command(event) -> str | None:
+        """The node editing command (copy, paste, select_all) bound to a key event, if any."""
+        if event.matches(QKeySequence.StandardKey.Copy):
+            return "copy"
+        if event.matches(QKeySequence.StandardKey.Paste):
+            return "paste"
+        if event.matches(QKeySequence.StandardKey.SelectAll):
+            return "select_all"
+        return None
+
+    def _editor_has_focus(self) -> bool:
+        """True while an input widget of a node has the keyboard (its own copy/paste apply)."""
+        return self.scene().focusItem() is not None
+
+    def event(self, event) -> bool:  # noqa: D102 - Qt API
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and not self._editor_has_focus()
+            and self._edit_command(event) is not None
+        ):
+            event.accept()  # the keys go to keyPressEvent, not to an application shortcut
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self._selected_connection is not None:
@@ -926,7 +1209,50 @@ class TreeView(QGraphicsView):
                 self.select_connection(None)
                 event.accept()
                 return
+            if self._selected_nodes and not self._editor_has_focus():
+                self.clear_node_selection()
+                event.accept()
+                return
+        command = None if self._editor_has_focus() else self._edit_command(event)
+        if command is not None:
+            event.accept()
+            if command == "select_all":
+                self.select_all_nodes()
+            elif command == "copy":
+                self.copy_selection()
+            else:
+                self.paste()
+            return
         super().keyPressEvent(event)
+
+    def copy_selection(self) -> bool:
+        """Copy the selected nodes to the clipboard (Ctrl+C). Returns True if something was copied."""
+        if self._owner is None:
+            return False
+        try:
+            return self._owner._copy_nodes(self.selected_nodes())
+        except Exception:  # noqa: BLE001 - never let a key press raise
+            log.exception("copying nodes failed")
+            return False
+
+    def paste(self) -> list[NodeWidget]:
+        """Paste nodes from the clipboard next to their originals (Ctrl+V); nothing while locked.
+
+        The view scrolls as little as needed to show the pasted nodes.
+        """
+        if self._owner is None or self._locked:
+            return []
+        try:
+            pasted = self._owner._paste_nodes()
+        except Exception:  # noqa: BLE001 - never let a key press raise
+            log.exception("pasting nodes failed")
+            return []
+        if pasted:
+            area = QRectF()
+            for node in pasted:
+                area = area.united(node._item.sceneBoundingRect())
+            self.ensureVisible(area, 40, 40)
+        return pasted
 
     def focusOutEvent(self, event) -> None:  # noqa: N802
         super().focusOutEvent(event)
@@ -987,8 +1313,12 @@ class TreeView(QGraphicsView):
         menu.exec(global_pos)
         menu.deleteLater()
 
-    def build_add_menu(self, scene_pos: QPointF) -> QMenu:
-        """Menu listing every available node type; choosing one adds it at ``scene_pos``."""
+    def build_add_menu(self, scene_pos: QPointF, connect_to: tuple[NodeWidget, str] | None = None) -> QMenu:
+        """Menu listing every available node type; choosing one adds it at ``scene_pos``.
+
+        With ``connect_to`` (a node and its ``"parent"`` / ``"children"`` label) the new
+        node is also connected to that label when the connection is possible.
+        """
         menu = QMenu(self)
         menu.setObjectName("AddNodeMenu")
         title = menu.addAction("Add Node")
@@ -1003,18 +1333,32 @@ class TreeView(QGraphicsView):
             action.setObjectName(f"Add_{type_name}")
             action.setData(type_name)
             action.setEnabled(not self._locked)
-            action.triggered.connect(lambda _checked=False, t=type_name, p=QPointF(scene_pos): self._add_node_from_menu(t, p))
+            action.triggered.connect(
+                lambda _checked=False, t=type_name, p=QPointF(scene_pos), c=connect_to: self._add_node_from_menu(t, p, c)
+            )
         if self._locked:
             menu.addSeparator()
             note = menu.addAction("Stop execution to add nodes")
             note.setEnabled(False)
         return menu
 
-    def _add_node_from_menu(self, type_name: str, scene_pos: QPointF) -> None:
+    def _add_node_from_menu(
+        self, type_name: str, scene_pos: QPointF, connect_to: tuple[NodeWidget, str] | None = None
+    ) -> NodeWidget | None:
         if self._locked or self._owner is None:
-            return
+            return None
         node = self._owner._create_node(type_name)
-        self.add_node(node, scene_pos)
+        item = self.add_node(node, scene_pos)
+        if connect_to is not None and self._is_current(connect_to[0]):
+            source, source_kind = connect_to
+            parent, child = (source, node) if source_kind == CHILDREN else (node, source)
+            if self.can_connect(parent, child):
+                # Put the new node's own connection label where the line was released.
+                node._notify_geometry()  # lay the new node out now: its label positions are needed
+                anchor = anchor_point(node, PARENT if node is child else CHILDREN)
+                item.setPos(item.pos() + (scene_pos - anchor))
+                self.connect_nodes(parent, child)
+        return node
 
     def build_node_menu(self, node: NodeWidget) -> QMenu:
         """Context menu of ``node``: rename, composite options and delete."""

@@ -1,10 +1,11 @@
 """Node widgets shown in the behavior tree view.
 
-Three kinds of nodes exist:
+Four kinds of nodes exist:
 
 * :class:`RootNodeWidget` - the single root of a tree, a Sequence or a Selector
   without a parent.
 * :class:`CompositeNodeWidget` - a Sequence or Selector with a parent and children.
+* :class:`NegationNodeWidget` - a parent of exactly one child whose result it inverts.
 * :class:`LeafNodeWidget` - the base class for user defined nodes. Subclasses
   override :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
 
@@ -71,15 +72,18 @@ __all__ = [
     "NodeWidget",
     "CompositeNodeWidget",
     "RootNodeWidget",
+    "NegationNodeWidget",
     "LeafNodeWidget",
     "UnknownLeafNodeWidget",
     "SEQUENCE",
     "SELECTOR",
+    "NEGATION",
 ]
 
 SEQUENCE = "Sequence"
 SELECTOR = "Selector"
 COMPOSITE_TYPES = (SEQUENCE, SELECTOR)
+NEGATION = "Negation"
 
 INT_MIN = -(2**31)
 INT_MAX = 2**31 - 1
@@ -509,6 +513,14 @@ class NodeWidget(QWidget):
         """True if nodes of this type can have children."""
         return False
 
+    @classmethod
+    def MaxChildren(cls) -> int | None:
+        """How many children a node of this type accepts: ``None`` for any number.
+
+        Connecting one more child to a node that has the maximum replaces its oldest child.
+        """
+        return None if cls.HasChildConnections() else 0
+
     def connection_label(self, kind: str) -> QLabel | None:
         """The ParentConnection (``"parent"``) or ChildConnections (``"children"``) label."""
         return self._parent_label if kind == PARENT else self._children_label
@@ -566,6 +578,9 @@ class NodeWidget(QWidget):
     def GetTree(self) -> BehaviorTreeWidget | None:
         """The BehaviorTreeWidget this node belongs to."""
         return self._tree
+
+    def _on_added_to_tree(self) -> None:
+        """Hook called on the GUI thread once the node was added to a tree view (``_tree`` is set)."""
 
     # ------------------------------------------------------------------ fields
     def GetFields(self) -> dict:
@@ -760,6 +775,42 @@ class RootNodeWidget(CompositeNodeWidget):
         if data.get("composite") in COMPOSITE_TYPES:
             self.SetCompositeType(data["composite"])
         super()._load_dict(data)
+
+
+class NegationNodeWidget(NodeWidget):
+    """Inverts the result of its single child (executed by ``py_trees.decorators.Inverter``).
+
+    The node fails when its child succeeds and succeeds when its child fails; while the
+    child runs, it runs. It accepts one child: connecting another child replaces it. A
+    Negation without a child fails when it is executed.
+    """
+
+    UI_FILE = "NegationNode.ui"
+    TYPE_NAME = NEGATION
+    _title = NEGATION
+
+    @classmethod
+    def HasChildConnections(cls) -> bool:
+        return True
+
+    @classmethod
+    def MaxChildren(cls) -> int | None:
+        return 1
+
+    def GetTypeName(self) -> str:
+        return NEGATION
+
+    def GetChild(self) -> NodeWidget | None:
+        """The child whose result is inverted (None when it has none)."""
+        children = self.GetChildren()
+        return children[0] if children else None
+
+    def DisplayTitle(self) -> str:
+        title = self.GetTitle()
+        return title if title == NEGATION else f"{title} ({NEGATION})"
+
+    def _title_tooltip(self) -> str:
+        return f"{NEGATION} - succeeds when its child fails and fails when its child succeeds"
 
 
 class _FieldRow(QWidget):

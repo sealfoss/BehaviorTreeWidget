@@ -35,10 +35,12 @@ from py_trees.common import Status  # noqa: E402
 from ._runctx import ExecutionCancelled  # noqa: E402
 
 from .blackboard import BlackboardStore, BlackboardView  # noqa: E402
+from .blackboard_nodes import EvaluationNodeWidget, SetNodeWidget  # noqa: E402
 from .config import TreeConfig  # noqa: E402
 from .nodes import (  # noqa: E402
     CompositeNodeWidget,
     LeafNodeWidget,
+    NegationNodeWidget,
     NodeStatus,
     NodeWidget,
     RootNodeWidget,
@@ -47,18 +49,21 @@ from .nodes import (  # noqa: E402
 from .serialization import TreeFileError  # noqa: E402
 from .widget import BehaviorTreeWidget, register_node_type, registered_node_types  # noqa: E402
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "BehaviorTreeWidget",
     "BlackboardStore",
     "BlackboardView",
     "CompositeNodeWidget",
+    "EvaluationNodeWidget",
     "ExecutionCancelled",
     "LeafNodeWidget",
+    "NegationNodeWidget",
     "NodeStatus",
     "NodeWidget",
     "RootNodeWidget",
+    "SetNodeWidget",
     "Status",
     "TreeConfig",
     "TreeFileError",

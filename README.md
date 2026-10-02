@@ -7,13 +7,15 @@ py_trees, and inspect or modify the blackboard.
 
 ![BehaviorTreeWidget](docs/screenshot.png)
 
-* **Behavior Tree tab**: a pannable, zoomable canvas with a Root node, Sequence and Selector
-  composites and your custom leaf nodes. You draw connections with the mouse.
+* **Behavior Tree tab**: a pannable, zoomable canvas with a Root node, Sequence, Selector and
+  Negation nodes, the built-in Evaluation and Set blackboard nodes, and your custom leaf nodes.
+  You draw connections with the mouse, select nodes, and copy and paste them.
 * **Blackboard tab**: named Integer, Double, String, Bool, List, Dictionary and Set entries that
   nodes read and write (`GetEntry` / `SetEntry`).
-* **Execution**: Execute, Pause, Stop, Reset and Configure buttons. Every node shows *Ready*,
-  *Running*, *Succeeded* or *Failed*. Execution uses `py_trees.composites.Sequence` /
-  `Selector` and a `py_trees.trees.BehaviourTree`, ticked by a Qt timer.
+* **Execution**: Execute, Pause, Stop, Reset and Configure buttons and a Loop Execution check
+  box. Every node shows *Ready*, *Running*, *Succeeded* or *Failed*. Execution uses
+  `py_trees.composites.Sequence` / `Selector`, `py_trees.decorators.Inverter` and a
+  `py_trees.trees.BehaviourTree`, ticked by a Qt timer.
 * **Files**: New, Save and Load trees as `.json`, including node positions, fields and
   blackboard values.
 
@@ -24,14 +26,15 @@ py_trees, and inspect or modify the blackboard.
 1. [Installation](#installation)
 2. [Quick start](#quick-start)
 3. [Writing leaf nodes](#writing-leaf-nodes)
-4. [The blackboard](#the-blackboard)
-5. [Using the editor](#using-the-editor)
-6. [Execution semantics](#execution-semantics)
-7. [Tree files](#tree-files)
-8. [API reference](#api-reference)
-9. [Threading rules](#threading-rules)
-10. [Building, testing and project layout](#building-testing-and-project-layout)
-11. [Notes and design decisions](#notes-and-design-decisions)
+4. [Built-in nodes](#built-in-nodes)
+5. [The blackboard](#the-blackboard)
+6. [Using the editor](#using-the-editor)
+7. [Execution semantics](#execution-semantics)
+8. [Tree files](#tree-files)
+9. [API reference](#api-reference)
+10. [Threading rules](#threading-rules)
+11. [Building, testing and project layout](#building-testing-and-project-layout)
+12. [Notes and design decisions](#notes-and-design-decisions)
 
 ---
 
@@ -41,7 +44,7 @@ Requirements: Python ≥ 3.10, PySide6 ≥ 6.5 and py_trees ≥ 2.2.1. pip insta
 automatically.
 
 ```bash
-pip install behavior_tree_widget-0.1.0-py3-none-any.whl
+pip install behavior_tree_widget-0.2.0-py3-none-any.whl
 ```
 
 The wheel is in the `dist/` folder of this repository. See
@@ -52,13 +55,13 @@ declare it as a dependency, point to the wheel file or to a folder of wheels:
 
 ```text
 # requirements.txt
-behavior-tree-widget @ file:///C:/path/to/behavior_tree_widget-0.1.0-py3-none-any.whl
+behavior-tree-widget @ file:///C:/path/to/behavior_tree_widget-0.2.0-py3-none-any.whl
 ```
 
 ```toml
 # pyproject.toml of your project
 [project]
-dependencies = ["behavior-tree-widget>=0.1"]
+dependencies = ["behavior-tree-widget>=0.2"]
 # install with:  pip install --find-links C:/path/to/wheels -e .
 ```
 
@@ -116,7 +119,8 @@ To use it:
 1. Click **New** to create a tree file. The editor stays disabled until a tree is created or
    loaded.
 2. Right-click the canvas to add nodes.
-3. Drag from a node's **Children** label to another node's **Parent** label to connect them.
+3. Drag from a node's **Children** label to another node's **Parent** label to connect them, or
+   release the line on empty canvas to add a new node connected to it.
 4. Click **Execute**.
 
 A fuller example, which also builds a tree from code, is in
@@ -161,7 +165,7 @@ class MoveTo(LeafNodeWidget):
 | `_fields` | Dict of field name → default value. Supported types: `int` (a 32-bit spin box), `float` (a spin box with `FLOAT_DECIMALS`, default 6, decimals), `str`, `bool` and `list`. Values of other types are shown read-only. Each node gets its own deep copy of the dict. Fields are shown on the node and saved with the tree. A node without fields hides its fields frame. |
 | `RUN_IN_THREAD` | `True` (default): `OnRun` runs on a worker thread, so long operations do not freeze the UI. `False`: `OnRun` runs on the GUI thread; use this for quick checks, or when `OnRun` touches Qt widgets. |
 | `THREAD_WAIT` | Seconds (default `0.02`) the tick waits for a worker-thread `OnRun` call it has just started, so quick calls finish within one tick. With `0` the node always shows *Running* first. |
-| `TYPE_NAME` | Name used in saved files and for registration. Defaults to the class name and is not inherited by subclasses. It must be unique and must not be `Root`, `Sequence` or `Selector`. |
+| `TYPE_NAME` | Name used in saved files and for registration. Defaults to the class name and is not inherited by subclasses. It must be unique and must not be a built-in type name: `Root`, `Sequence`, `Selector`, `Negation`, `Evaluation` or `Set`. |
 | `UI_FILE` | Optional custom Qt Designer file for the node: an absolute path, or a path relative to the module that defines the class. It must contain the named widgets `Title`, `Status` and `ParentConnection`, and may contain `FrameFields` + `Fields` (QListView). |
 
 You can also assign `_title` and `_fields` in your class's `__init__`, before or after calling
@@ -229,6 +233,65 @@ them. If a tree uses a node type that is not registered, loading it creates a pl
 marked "(unknown type)". The placeholder keeps all of the node's saved data and fails when
 executed, so saving the tree again loses nothing.
 
+## Built-in nodes
+
+Besides the Root, Sequence and Selector, every `BehaviorTreeWidget` offers three built-in node
+types in its right-click menu. They need no registration.
+
+### Negation
+
+A node with a **Parent** label and a single **Child** label that inverts the result of its child
+(`py_trees.decorators.Inverter`):
+
+| Child | Negation |
+|---|---|
+| *Succeeded* | *Failed* |
+| *Failed* | *Succeeded* |
+| *Running* | *Running* |
+
+A Negation has one child. Connecting another child replaces the current one, just as connecting
+a node that already has a parent replaces its old parent. A Negation without a child fails when
+it is executed, and its Status tooltip says why.
+
+### Evaluation and Set
+
+Leaf nodes that check or change blackboard values without any code. Both show three editors:
+
+| Editor | Purpose |
+|---|---|
+| **Value Name** (combo box `ValueName`) | The blackboard entry the node works on. Lists every entry of the blackboard. |
+| **Compare To** (Evaluation) / **Set To** (Set) (combo box `CompareTo`) | *Literal*, or another entry of the same type as the Value Name entry. |
+| **Literal Value** (`LiteralValue`) | Shown and enabled only while *Literal* is chosen. Its editor follows the type of the Value Name entry: a spin box for Integer, a double spin box for Double, a line edit for String, a check box for Bool, and a line edit taking a Python literal (`[1, 2]`, `{'a': 1}`, `{1, 2}`) for List, Dictionary and Set. |
+
+* **Evaluation** succeeds when the Value Name entry equals the Compare To entry (or the literal)
+  and fails otherwise. Values are compared with `==`, except that a Bool never equals a number.
+* **Set** sets the Value Name entry to the value of the Set To entry (or to the literal) and
+  succeeds.
+* Both run on the GUI thread (`RUN_IN_THREAD = False`). They fail with an error (Status tooltip,
+  `nodeError` signal) when no entry is chosen or when an entry they need does not exist.
+* The combo boxes follow the blackboard: new entries appear, and renamed entries are followed.
+  A chosen entry that disappears stays chosen and is shown in red as "(missing)", so removing and
+  re-adding an entry, or loading a tree, loses nothing.
+* Choosing a Value Name of another type resets Compare To to *Literal* and converts the literal
+  where possible (for example, an Integer literal `5` becomes `5.0` for a Double entry and `"5"`
+  for a String entry).
+* The choices are the node's fields and are saved with the tree: `ValueName` (`""` until an entry
+  is chosen), `CompareTo` (an entry name, or `null` for *Literal*) and `LiteralValue`. The
+  literal is used with the type of the Value Name entry.
+
+From code:
+
+```python
+check = widget.AddNode("Evaluation", 0, 200)
+check.SetValueName("battery_low")   # the entry to evaluate
+check.SetCompareTo(None)            # None = Literal; or the name of another entry
+check.SetLiteralValue(True)
+
+setter = widget.AddNode("Set", 300, 200)
+setter.SetValueName("mode")
+setter.SetLiteralValue("patrol")
+```
+
 ## The blackboard
 
 The **Blackboard** tab lists named entries that nodes share:
@@ -289,13 +352,16 @@ widget.RemoveEntry("speed")
 
 | Action | How |
 |---|---|
-| Add a node | Right-click empty canvas and choose Sequence, Selector or one of your leaf types. The node is placed at the click position. |
+| Add a node | Right-click empty canvas and choose Sequence, Selector, Negation, Evaluation, Set or one of your leaf types. The node is placed at the click position. |
+| Add a connected node | Drag from a **Children** or **Parent** label and release over empty canvas (or a line). The Add Node menu opens there, as for a right click. The node you choose is placed where you released and connected to the label you dragged from: below a Children label, or above a Parent label (replacing an old parent). A node that cannot be connected that way, such as a leaf as a parent, is added unconnected. Closing the menu adds nothing. |
 | Delete / rename a node | Right-click the node → Delete / Rename…. The Root cannot be deleted. |
 | Change a composite | Right-click a Sequence, Selector or the Root → Sequence or Selector, and Memory on/off. |
-| Connect | Press on a **Children** label and drag to another node's **Parent** label, or the other way round. While you drag, the line is red, and turns green over a compatible label. Release there to connect; the line turns blue. Releasing anywhere else cancels. Connecting a node that already has a parent replaces its old connection. Cycles are not allowed. |
+| Connect | Press on a **Children** label and drag to another node's **Parent** label, or the other way round. While you drag, the line is red, and turns green over a compatible label. Release there to connect; the line turns blue. Releasing over a node cancels; releasing over empty canvas opens the Add Node menu (see above). Connecting a node that already has a parent replaces its old connection, and so does connecting a second child to a Negation. Cycles are not allowed. |
 | Select / delete a connection | Click the line; it turns green. Press **Delete** (or Backspace) to delete it. Clicking anywhere else deselects it. Right-click a line → Delete Connection also works. |
-| Move a node | Drag it anywhere except its Parent/Children labels and input fields. Dragging on a field's name works. |
-| Pan | Drag empty canvas or a connection line, or drag with the middle mouse button anywhere. |
+| Select nodes | Click a node; selected nodes have a blue outline. **Ctrl + click** adds or removes a node, **Shift + click** adds one. **Ctrl or Shift + drag** on empty canvas selects every node the rectangle touches. **Ctrl+A** selects all nodes. Click empty canvas (without dragging) or press **Esc** to deselect. |
+| Move nodes | Drag a node anywhere except its Parent/Children labels and input fields; dragging on a field's name works. Dragging a selected node moves every selected node. |
+| Copy and paste nodes | Select nodes, press **Ctrl+C**, then **Ctrl+V**. The copies are placed in the free area nearest to the original nodes, at least 20 pixels from every other node, keeping their arrangement and the connections between them. They become the selection, and the view scrolls to show them if needed. Each Ctrl+V pastes another set. The Root is never copied, and connections to nodes that were not copied are not copied. While an input field of a node has the keyboard, Ctrl+C / Ctrl+V / Ctrl+A act on its text instead. Copied nodes can be pasted into another BehaviorTreeWidget, also in another application; node types it does not know become placeholders. |
+| Pan | Drag empty canvas or a connection line, or drag with the middle mouse button anywhere. Panning keeps the selection. |
 | Zoom | Ctrl + mouse wheel. |
 | Edit fields | Use the editors on leaf nodes; changes take effect immediately. |
 
@@ -308,16 +374,16 @@ The numbers on connection lines show the execution order of a composite's childr
 is **left to right** as drawn (for ties, the higher node comes first); move nodes to reorder.
 While a tree executes, the numbers keep showing the order the running tree uses; moving nodes
 changes the order at the next Execute.
-If a Sequence, Selector or Root node's title differs from its type, the type is shown in
-brackets, for example "Root (Sequence)".
+If a Sequence, Selector, Negation or Root node's title differs from its type, the type is shown
+in brackets, for example "Root (Sequence)".
 
 While a tree is executing (running or paused), its structure is locked:
-* Nodes and connections cannot be added or removed.
+* Nodes and connections cannot be added or removed, and Ctrl+V pastes nothing.
 * The composite type, Memory and Delete menu items, and the Delete key, are disabled.
-* `AddNode`, `RemoveNode`, `Connect`, `Disconnect`, `NodeWidget.SetParent`, `AddChild` and
-  `RemoveChild` raise `RuntimeError`.
+* `AddNode`, `RemoveNode`, `Connect`, `Disconnect`, `PasteNodes`, `NodeWidget.SetParent`,
+  `AddChild` and `RemoveChild` raise `RuntimeError`.
 
-You can still move and rename nodes, and edit fields and the blackboard.
+You can still select, copy, move and rename nodes, and edit fields and the blackboard.
 `SetCompositeType` / `SetMemory` called from code take effect at the next Execute.
 
 ## Execution semantics
@@ -329,10 +395,21 @@ You can still move and rename nodes, and edit fields and the blackboard.
 | Stop ⏹ | Stops ticking, interrupts running nodes (`CancelRequested()` becomes true, `OnTerminate(…, READY)`), and resets every node to *Ready*. |
 | Reset 🔄 | Resets every node to *Ready* without halting; a running tree starts over on its next tick. |
 | Configure ⚙ | Opens the options dialog (below). |
+| Loop Execution ☐ | Unchecked (the default): execution stops when the Root returns (succeeds or fails). Checked: each time the Root returns, the tree is executed again, starting on the next tick (the tick interval is the only pause). |
 
+* **Loop Execution** keeps everything as it was when the Root returned: blackboard entries,
+  node fields and any other state of your nodes carry over into the next loop, as if execution
+  never paused. Only the Status labels go back to *Ready* at the start of each loop, so they show
+  the progress of the current loop. "Restore blackboard values on Stop / Reset" still applies
+  only to Stop and Reset. `executionFinished` is not emitted while looping. The check box can be
+  switched while the tree runs: unchecking it lets the current loop finish and then stops;
+  checking it keeps a running tree going. It is the same option as Configure → Execution
+  (`TreeConfig.repeat`, `GetLoopExecution()` / `SetLoopExecution()`) and is saved with the tree.
 * A **Sequence** runs its children left to right until one fails, and a **Selector** until one
   succeeds (`py_trees.composites.Sequence` / `Selector`). The Root is a Sequence by default;
   switch it to a Selector from its right-click menu.
+* A **Negation** succeeds when its child fails and fails when its child succeeds
+  (`py_trees.decorators.Inverter`); see [Built-in nodes](#built-in-nodes).
 * **Memory** is on by default, and can be set per composite from the right-click menu. With
   memory, a composite resumes from its running child on the next tick instead of re-evaluating
   earlier children every tick (py_trees `memory=True`). With memory off, earlier children are
@@ -358,7 +435,7 @@ Configure options (saved with the tree):
 | Option | Default | Meaning |
 |---|---|---|
 | Tick interval | 100 ms | Time between ticks (1–60000 ms). |
-| Execution | Run once | *Run once* stops when the Root succeeds or fails; *Repeat* starts a new round each time. |
+| Execution | Run once | *Run once* stops when the Root succeeds or fails; *Loop* executes the tree again each time. The same option as the Loop Execution check box. |
 | Restore blackboard values on Stop / Reset | off | Takes a snapshot of the blackboard when execution starts and restores it on Stop, or on Reset (also after a completed run). Blackboard edits you make while the tree is idle discard the snapshot. |
 | New Sequence / Selector nodes use memory | on | Default memory flag for new composites. |
 
@@ -388,12 +465,21 @@ A tree file is JSON:
     {"id": "4f0c…", "type": "Root", "title": "Root", "x": 0.0, "y": 0.0, "composite": "Sequence", "memory": true},
     {"id": "9a1d…", "type": "MoveTo", "title": "Move To", "x": -40.0, "y": 180.0,
      "fields": {"x": 1.5, "y": 0.0, "speed": 5, "mode": ["walk", "run"], "avoid_obstacles": true, "label": "target"},
-     "field_selections": {"mode": 1}}
+     "field_selections": {"mode": 1}},
+    {"id": "77b2…", "type": "Negation", "title": "Negation", "x": 300.0, "y": 180.0},
+    {"id": "e1c4…", "type": "Evaluation", "title": "Evaluation", "x": 260.0, "y": 340.0,
+     "fields": {"ValueName": "counter", "CompareTo": null, "LiteralValue": 3}}
   ],
-  "connections": [{"parent": "4f0c…", "child": "9a1d…"}],
+  "connections": [
+    {"parent": "4f0c…", "child": "9a1d…"},
+    {"parent": "4f0c…", "child": "77b2…"},
+    {"parent": "77b2…", "child": "e1c4…"}
+  ],
   "blackboard": [{"name": "counter", "type": "Integer", "value": 3}]
 }
 ```
+
+`config.repeat` is the Loop Execution check box.
 
 **Fields**
 * Saved field values override the class defaults for fields the class still declares. A saved
@@ -425,8 +511,8 @@ A tree file is JSON:
 * A file is validated completely before the current tree is replaced. A file that cannot be
   loaded leaves the current tree untouched.
 * Problems in an otherwise valid file are reported and skipped: unknown node types become
-  placeholders; invalid connections and invalid blackboard entries are dropped; nodes outside
-  the drawing area are moved inside it.
+  placeholders; invalid connections (including a second child of a Negation) and invalid
+  blackboard entries are dropped; nodes outside the drawing area are moved inside it.
 
 ## API reference
 
@@ -437,18 +523,22 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
 | Method | Description |
 |---|---|
 | `RegisterNodeType(cls)` | Register a leaf class. Raises `TypeError` / `ValueError` if the class is invalid or its type name is taken. |
-| `GetNodeTypes()` | Every type that can be added: `"Sequence"`, `"Selector"`, then the registered leaf type names (sorted). |
-| `GetNodeType(name)` | The registered leaf class, or `None` for unknown or built-in names. |
+| `GetNodeTypes()` | Every type that can be added: `"Sequence"`, `"Selector"`, `"Negation"`, `"Evaluation"`, `"Set"`, then the registered leaf type names (sorted). |
+| `GetNodeType(name)` | The leaf class of a type name (also `EvaluationNodeWidget` / `SetNodeWidget`), or `None` for unknown names and for Root, Sequence, Selector and Negation. |
 | `NewTree(path=None)`, `LoadTree(path=None)`, `SaveTree(path=None)` | File operations. Without a path, a file dialog is shown (and `False` is returned if it is cancelled); errors are shown in message boxes. With a path, `LoadTree` raises `TreeFileError` (a `ValueError`), `NewTree` raises `OSError`, and `SaveTree` raises `OSError`, `ValueError` or `TypeError`. All three return `True` on success. `LoadTree`/`NewTree` called during a tick (e.g. from `OnRun`) check the file at once and replace the tree right after the tick. |
 | `ConfirmDiscardChanges()` | Asks whether to save unsaved changes. Returns `False` if the user cancelled. |
 | `IsTreeLoaded()`, `GetFilePath()`, `IsModified()` | Tree state. |
 | `GetRootNode()`, `GetNodes()` | Nodes in the view. |
-| `AddNode(node_type, x=0.0, y=0.0)` | Adds a node with its top-left corner at scene position (x, y) and returns it. `node_type` is `"Sequence"`, `"Selector"`, a registered leaf type name, a leaf class or a leaf instance; classes are registered automatically. Raises `ValueError` for unknown names and `RuntimeError` while executing. |
-| `RemoveNode(node)`, `Connect(parent, child)`, `Disconnect(child)` | Edit the structure. Raise `RuntimeError` while executing; `Connect` raises `ValueError` for invalid connections such as cycles. |
+| `AddNode(node_type, x=0.0, y=0.0)` | Adds a node with its top-left corner at scene position (x, y) and returns it. `node_type` is `"Sequence"`, `"Selector"`, `"Negation"`, `"Evaluation"`, `"Set"`, a registered leaf type name, a leaf class or a node instance (except a Root); classes are registered automatically. Raises `ValueError` for unknown names and `RuntimeError` while executing. |
+| `RemoveNode(node)`, `Connect(parent, child)`, `Disconnect(child)` | Edit the structure. Raise `RuntimeError` while executing; `Connect` raises `ValueError` for invalid connections such as cycles. Connecting a second child to a Negation replaces its child. |
+| `GetSelectedNodes()`, `SelectNodes(nodes, add=False)` | The selected nodes; select nodes (`add=True` keeps the current selection, `SelectNodes([])` deselects all). |
+| `CopyNodes(nodes=None)` | Copies `nodes` (default: the selected nodes) and the connections between them to the clipboard, as Ctrl+C does. Returns `False` (and leaves the clipboard alone) when there is nothing to copy; the Root is never copied. |
+| `PasteNodes()` | Pastes the clipboard's nodes in the free area nearest to where they were copied, as Ctrl+V does, selects them and returns them (`[]` when the clipboard holds no nodes). Raises `RuntimeError` while executing. |
 | `Execute()`, `Pause()`, `Stop()`, `Reset()`, `Configure()` | Execution control, the same as the buttons. |
 | `GetExecutionState()` | `"Idle"`, `"Running"` or `"Paused"`. |
 | `IsExecuting()` | `True` while running or paused. |
 | `GetConfig()`, `SetConfig(config)` | Execution options (`TreeConfig`). `GetConfig()` returns a copy: `c = w.GetConfig(); c.repeat = True; w.SetConfig(c)`. |
+| `GetLoopExecution()`, `SetLoopExecution(loop)` | The Loop Execution check box (`TreeConfig.repeat`). |
 | `GetEntry(name)`, `SetEntry(value, name)`, `AddEntry(name, type_name, value=None)`, `HasEntry(name)`, `RemoveEntry(name)`, `GetEntryNames()`, `GetEntryType(name)`, `GetBlackboardNamespace()` | Blackboard. |
 | `Shutdown()` | Stops execution for good and releases the blackboard's py_trees keys. Afterwards the blackboard is empty and read-only (`SetEntry` raises `RuntimeError`) and the tree cannot be executed. Call it when your window closes for the last time; it is also called automatically when the application quits. |
 
@@ -460,6 +550,7 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
 | `executionFinished(str)` | A run-once execution finished: `"Succeeded"` or `"Failed"`. |
 | `nodeStatusChanged(NodeWidget, str)` | A node's status changed. |
 | `nodeError(NodeWidget, str)` | A node failed because of an exception or an invalid return value. |
+| `nodeSelectionChanged()` | The selected nodes changed. |
 
 ### Node classes
 
@@ -467,15 +558,22 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
   `SetTitle()`, `GetStatus()` (a `NodeStatus`), `GetError()`, `GetParent()`, `GetChildren()`
   (in execution order), `SetParent()`, `AddChild()`, `RemoveChild()`, `GetTree()`,
   `GetFields()`, `GetField()`, `SetField()`, `GetFieldSelection()`,
-  `GetFieldSelectionIndex()`, `SetFieldSelectionIndex()`, `CancelRequested()`. Signal:
-  `changed(bool runtime)` for every change of saved data.
+  `GetFieldSelectionIndex()`, `SetFieldSelectionIndex()`, `CancelRequested()`, and the class
+  methods `HasParentConnection()`, `HasChildConnections()` and `MaxChildren()` (`None` for any
+  number, `1` for a Negation, `0` for a leaf). Signal: `changed(bool runtime)` for every change
+  of saved data.
 * `RootNodeWidget` and `CompositeNodeWidget` add `GetCompositeType()` /
   `SetCompositeType("Sequence"|"Selector")` and `GetMemory()` / `SetMemory(bool)`.
+* `NegationNodeWidget` adds `GetChild()` (the child, or `None`).
+* `EvaluationNodeWidget` and `SetNodeWidget` (leaf nodes) add `GetValueName()` /
+  `SetValueName(name)`, `GetCompareTo()` / `SetCompareTo(name_or_None)`, `UsesLiteral()`,
+  `GetLiteralValue()` / `SetLiteralValue(value)` and `GetEffectiveLiteralValue()` (the literal
+  converted to the type of the Value Name entry, as it is used). They are thread-safe.
 * `LeafNodeWidget`: subclass it (see above).
 * `NodeStatus`: `READY`, `RUNNING`, `SUCCEEDED`, `FAILED` (values `"Ready"`, …).
 * `Status` is a re-export of `py_trees.common.Status`, for `OnRun` return values.
 * `ExecutionCancelled` is raised when an interrupted `OnRun` call tries to change the tree.
-* `TreeConfig` holds the execution options: `tick_interval_ms`, `repeat`,
+* `TreeConfig` holds the execution options: `tick_interval_ms`, `repeat` (Loop Execution),
   `restore_blackboard`, `default_memory`.
 * `TreeFileError` is raised by `LoadTree(path)` for invalid files.
 
@@ -488,8 +586,9 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
   the command arrived, so it cannot affect a later run. Commands to another tree, or from
   other threads, are always carried out.
 * The node getters and setters listed under "Thread-safe helpers" may be called from any thread.
-* Structure, file and configuration methods (`AddNode`, `RemoveNode`, `Connect`, `Disconnect`,
-  `NewTree`, `LoadTree`, `SaveTree`, `SetConfig`, `Shutdown`) must be called on the GUI thread.
+* Structure, selection, clipboard, file and configuration methods (`AddNode`, `RemoveNode`,
+  `Connect`, `Disconnect`, `SelectNodes`, `CopyNodes`, `PasteNodes`, `NewTree`, `LoadTree`,
+  `SaveTree`, `SetConfig`, `SetLoopExecution`, `Shutdown`) must be called on the GUI thread.
   Otherwise they raise `RuntimeError`.
 * The tree is ticked on the GUI thread. py_trees is not thread-safe; only leaf `OnRun` calls
   run on worker threads.
@@ -501,7 +600,7 @@ python -m venv .venv
 .venv/Scripts/pip install -e ".[test]"      # Windows (use .venv/bin/pip elsewhere)
 .venv/Scripts/python -m pytest              # runs the test suite offscreen
 .venv/Scripts/pip install build
-.venv/Scripts/python -m build               # -> dist/behavior_tree_widget-0.1.0-py3-none-any.whl
+.venv/Scripts/python -m build               # -> dist/behavior_tree_widget-0.2.0-py3-none-any.whl
 ```
 
 ```
@@ -510,7 +609,8 @@ src/behavior_tree_widget/
     __init__.py        public API
     widget.py          BehaviorTreeWidget (tabs, buttons, files)
     canvas.py          graphics view: nodes, connections, mouse gestures, context menus
-    nodes.py           NodeWidget, RootNodeWidget, CompositeNodeWidget, LeafNodeWidget
+    nodes.py           NodeWidget, RootNodeWidget, CompositeNodeWidget, NegationNodeWidget, LeafNodeWidget
+    blackboard_nodes.py  the built-in Evaluation and Set leaf nodes
     execution.py       py_trees adapter and ticking
     blackboard.py      blackboard store (py_trees backed) and the Blackboard tab
     serialization.py   JSON file format
@@ -518,7 +618,8 @@ src/behavior_tree_widget/
     demo.py            demo application and example nodes (__main__.py runs it)
     _runctx.py         cancellation tokens of running nodes (internal)
     _ui.py             loading of the packaged .ui files (internal)
-    ui/*.ui            Qt Designer files (editable with pyside6-designer)
+    ui/*.ui            Qt Designer files (editable with pyside6-designer), including
+                       NegationNode.ui, EvaluationNode.ui and SetNode.ui
 tests/                 pytest + pytest-qt test suite
 examples/              example application
 docs/                  screenshots
@@ -528,6 +629,30 @@ docs/                  screenshots
 
 * **Children order** is the left-to-right position on the canvas, as in most graphical behavior
   tree editors. The small numbers on the connection lines show it.
+* **Loop Execution** is the existing `TreeConfig.repeat` option, so the check box and
+  Configure → Execution can never disagree, and the choice is saved with the tree. A new loop
+  starts on the tick after the Root returned rather than in the same tick: a tree whose nodes all
+  finish at once would otherwise loop forever without returning control to Qt.
+* **Copy and paste** use the system clipboard with the MIME type
+  `application/x-behavior-tree-widget-nodes`, holding JSON in the format of a tree file's
+  `nodes` and `connections`. Pasting therefore behaves like loading those nodes: the copies get
+  new ids, values that cannot be written as JSON keep their defaults, and unknown node types
+  become placeholders. Placement is exact: of all positions where the copied group (moved as a
+  whole) keeps 20 pixels from every node, the one closest to the original position is used
+  (ties go right, then down). On Qt platforms without a system clipboard (`offscreen`,
+  `minimal`, ...), copied nodes are removed from the in-process clipboard at exit, because
+  PySide6 can crash while destroying such a clipboard holding them.
+* **Releasing a connection drag over the canvas** opens the same menu as a right click, and the
+  chosen node is connected to the dragged label, as in most node editors. It is placed so that
+  its own connection label lies where the line was released.
+* **Negation** is built on `py_trees.decorators.Inverter`. It is not a `CompositeNodeWidget`
+  (it has no Sequence/Selector type and no memory option); `MaxChildren()` limits it to one
+  child.
+* **Evaluation and Set** store their choices as fields, so they are saved, loaded, copied and
+  pasted like any leaf node's fields. Their combo boxes refresh only when entries are added,
+  removed, renamed, retyped or reordered, not when values change. Entry names are kept even
+  while an entry does not exist, because a tree's nodes are created before its blackboard is
+  loaded.
 * **Threading**: the tree is ticked on the GUI thread, following py_trees' guidance that
   `update()` must never block. Long-running leaf work runs on worker threads.
 * **Blackboard** values are stored in py_trees' blackboard, with a namespace per widget so

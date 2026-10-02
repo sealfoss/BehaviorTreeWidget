@@ -23,8 +23,9 @@ class TreeConfig:
 
     Attributes:
         tick_interval_ms: Milliseconds between two ticks of the tree.
-        repeat: If False (default) execution stops once the root node succeeds or
-            fails. If True the tree keeps being ticked, restarting after completion.
+        repeat: The "Loop Execution" check box. If False (default) execution stops once
+            the root node succeeds or fails. If True the tree is executed again on the
+            next tick each time the root returns, keeping the blackboard and node values.
         restore_blackboard: If True the blackboard values captured when execution
             starts are restored by Stop and Reset.
         default_memory: ``memory`` flag given to newly created Sequence/Selector
@@ -65,7 +66,7 @@ class ConfigureDialog(QDialog):
     """Modal dialog editing a copy of a :class:`TreeConfig`."""
 
     RUN_ONCE_TEXT = "Run once (stop when the root completes)"
-    REPEAT_TEXT = "Repeat (keep ticking after the root completes)"
+    REPEAT_TEXT = "Loop (execute again each time the root completes)"
 
     def __init__(self, config: TreeConfig, parent: QWidget | None = None):
         super().__init__(parent)
@@ -83,6 +84,7 @@ class ConfigureDialog(QDialog):
         self.run_mode.setObjectName("RunMode")
         self.run_mode.addItems([self.RUN_ONCE_TEXT, self.REPEAT_TEXT])
         self.run_mode.setCurrentIndex(1 if config.repeat else 0)
+        self.run_mode.setToolTip("The same option as the Loop Execution check box next to the buttons.")
 
         self.restore_blackboard = QCheckBox("Restore blackboard values on Stop / Reset", self)
         self.restore_blackboard.setObjectName("RestoreBlackboard")

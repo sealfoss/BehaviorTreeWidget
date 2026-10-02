@@ -4,6 +4,7 @@ When execution starts, the node graph is translated into a py_trees tree:
 
 * Root / Sequence / Selector nodes -> ``py_trees.composites.Sequence`` /
   ``py_trees.composites.Selector`` (children ordered left to right),
+* Negation nodes -> ``py_trees.decorators.Inverter`` (a Negation without a child fails),
 * leaf nodes -> :class:`LeafBehaviour`, an adapter calling ``LeafNodeWidget.OnRun``.
 
 The tree is ticked on the GUI thread by a QTimer. Leaves whose ``RUN_IN_THREAD`` is
@@ -40,7 +41,7 @@ from py_trees.common import Status
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from ._runctx import RunToken, bound, check_not_cancelled, current_token
-from .nodes import SEQUENCE, CompositeNodeWidget, LeafNodeWidget, NodeStatus, NodeWidget
+from .nodes import SEQUENCE, CompositeNodeWidget, LeafNodeWidget, NegationNodeWidget, NodeStatus, NodeWidget
 
 if TYPE_CHECKING:  # pragma: no cover
     from .widget import BehaviorTreeWidget
@@ -242,6 +243,18 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
         except Exception:  # noqa: BLE001
             details = ""
         log.error("%s: %s\n%s", self.node, self.error, details)
+
+
+class FailingBehaviour(py_trees.behaviour.Behaviour):
+    """Stands in for a node that cannot run (e.g. a Negation without a child): fails with ``error``."""
+
+    def __init__(self, name: str, error: str):
+        super().__init__(name=name)
+        self.error = error
+
+    def update(self) -> Status:
+        self.feedback_message = self.error
+        return Status.FAILURE
 
 
 class TreeExecutor(QObject):
@@ -555,6 +568,14 @@ class TreeExecutor(QObject):
                     memory=node.GetMemory(),
                     children=[build(child) for child in node.GetChildren()],
                 )
+            elif isinstance(node, NegationNodeWidget):
+                child = node.GetChild()
+                if child is not None:
+                    behaviour = py_trees.decorators.Inverter(name=node.GetTitle(), child=build(child))
+                else:
+                    message = "a Negation needs a child: connect the node whose result it inverts"
+                    log.warning("%s: %s", node, message)
+                    behaviour = FailingBehaviour(node.GetTitle(), message)
             elif isinstance(node, LeafNodeWidget):
                 behaviour = LeafBehaviour(node, self)
             else:

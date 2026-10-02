@@ -573,6 +573,11 @@ class BlackboardStore(QObject):
         with self._lock:
             return list(self._types)
 
+    def types(self) -> dict[str, str]:
+        """``{name: type}`` of every entry, in display order."""
+        with self._lock:
+            return dict(self._types)
+
     def has(self, name: str) -> bool:
         with self._lock:
             return name in self._types
