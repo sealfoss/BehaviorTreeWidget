@@ -1579,7 +1579,8 @@ def test_widget_registration_is_local_to_the_widget(make_widget, clean_registry)
 def test_get_node_types_lists_composites_then_sorted_leaves(make_widget, clean_registry):
     widget = make_widget(node_types=[Succeed, FailNode, AllFields])
     assert widget.GetNodeTypes() == [
-        "Sequence", "Selector", "Negation", "Evaluation", "Set", "AllFields", "FailNode", "Succeed",
+        "Sequence", "Selector", "Negation", "Evaluation", "Set", "Restart", "Pause", "Stop",
+        "AllFields", "FailNode", "Succeed",
     ]
     assert widget.GetNodeType("Succeed") is Succeed
     assert widget.GetNodeType("Sequence") is None

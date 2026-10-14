@@ -97,6 +97,7 @@ READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
 LOGGER = "behavior_tree_widget"
 LEFT = Qt.MouseButton.LeftButton
 NO_MOD = Qt.KeyboardModifier.NoModifier
+CTRL = Qt.KeyboardModifier.ControlModifier
 GUI_THREAD = threading.get_ident()  # test modules are imported on the main (GUI) thread
 POSITION_LIMIT = SCENE_EXTENT / 2 - SCENE_MARGIN  # 48000
 WINDOWS = sys.platform == "win32"
@@ -1938,10 +1939,10 @@ def test_user_navigation_cancels_the_pending_view_positioning(qtbot, make_widget
     navigated = record(view.navigated)
     if gesture == "pan":
         start = QPoint(15, 15)
-        QTest.mousePress(viewport, LEFT, NO_MOD, start)
+        QTest.mousePress(viewport, LEFT, CTRL, start)
         for step in range(1, 5):
             QTest.mouseMove(viewport, start + QPoint(10 * step, 25 * step))
-        QTest.mouseRelease(viewport, LEFT, NO_MOD, start + QPoint(40, 100))
+        QTest.mouseRelease(viewport, LEFT, CTRL, start + QPoint(40, 100))
     else:
         pos = QPointF(200, 150)
         modifiers = Qt.KeyboardModifier.ControlModifier if gesture == "ctrl-wheel-zoom" else NO_MOD
@@ -2314,12 +2315,12 @@ def test_press_after_lost_passthrough_release_releases_the_scene_grab(qtbot, act
     if next_press == "empty":
         start = empty_point(bt)
         center = view.view_center()
-        QTest.mousePress(viewport, LEFT, NO_MOD, start)
+        QTest.mousePress(viewport, LEFT, CTRL, start)
         assert view.scene().mouseGrabberItem() is None, "the stale implicit grab must be released"
         assert view._gesture is _Gesture.PANNING
         for step in range(1, 5):
             QTest.mouseMove(viewport, start + QPoint(10 * step, 5 * step))
-        QTest.mouseRelease(viewport, LEFT, NO_MOD, start + QPoint(40, 20))
+        QTest.mouseRelease(viewport, LEFT, CTRL, start + QPoint(40, 20))
         after = view.view_center()
         assert abs((center.x() - after.x()) - 40) <= 1 and abs((center.y() - after.y()) - 20) <= 1
     else:

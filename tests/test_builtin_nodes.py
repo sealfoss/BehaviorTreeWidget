@@ -205,7 +205,7 @@ def test_negation_menu_has_rename_and_delete_but_no_composite_options(bt, dialog
     negation = bt.AddNode("Negation", 0, 200)
     menu = bt.view().build_node_menu(negation)
     names = [action.objectName() for action in menu.actions() if not action.isSeparator()]
-    assert names == ["Rename", "Delete"]
+    assert names == ["Rename", "SelectChildren", "Delete"]
     menu.deleteLater()
 
 

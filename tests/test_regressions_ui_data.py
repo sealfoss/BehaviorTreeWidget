@@ -88,6 +88,7 @@ LEFT = Qt.MouseButton.LeftButton
 RIGHT = Qt.MouseButton.RightButton
 MIDDLE = Qt.MouseButton.MiddleButton
 NO_MOD = Qt.KeyboardModifier.NoModifier
+CTRL = Qt.KeyboardModifier.ControlModifier
 LOGGER = "behavior_tree_widget"
 
 
@@ -343,9 +344,9 @@ class Mouse:
             return window.windowHandle(), self.viewport.mapTo(window, point)
         return self.viewport, point
 
-    def press(self, point: QPoint, button=LEFT) -> None:
+    def press(self, point: QPoint, button=LEFT, modifiers=NO_MOD) -> None:
         target, pos = self._target(point)
-        QTest.mousePress(target, button, NO_MOD, pos)
+        QTest.mousePress(target, button, modifiers, pos)
 
     def move(self, point: QPoint) -> None:
         target, pos = self._target(point)
@@ -355,8 +356,8 @@ class Mouse:
         target, pos = self._target(point)
         QTest.mouseRelease(target, button, NO_MOD, pos)
 
-    def drag(self, start: QPoint, end: QPoint, steps: int = 4, button=LEFT) -> None:
-        self.press(start, button)
+    def drag(self, start: QPoint, end: QPoint, steps: int = 4, button=LEFT, modifiers=NO_MOD) -> None:
+        self.press(start, button, modifiers)
         for step in range(1, steps + 1):
             point = start + (end - start) * (step / steps)
             self.move(QPoint(round(point.x()), round(point.y())))
@@ -604,7 +605,7 @@ def test_lost_release_while_panning(qtbot, active, scenario, hover_first):
     start = empty_point(bt)
     center = view.view_center()
 
-    mouse.press(start)
+    mouse.press(start, modifiers=CTRL)
     mouse.move(start + QPoint(10, 5))
     mouse.move(start + QPoint(20, 10))
     assert_close(view.view_center() - center, QPointF(-20, -10))
@@ -673,7 +674,7 @@ def test_lost_release_while_connecting(qtbot, active, scenario, hover_first):
 @pytest.mark.parametrize("field", ["count", "ratio", "label", "enabled"])
 def test_lost_release_on_field_editor_does_not_swallow_next_click(qtbot, active, scenario, field):
     """A press on a field editor passes through to the widget; if its release is lost, the next
-    press-drag on empty space must still pan ("the next click must be handled normally")."""
+    Ctrl + drag on empty space must still pan ("the next click must be handled normally")."""
     bt = active
     view = bt.view()
     node = bt.AddNode("AllFields", 0, 200)
@@ -688,7 +689,7 @@ def test_lost_release_on_field_editor_does_not_swallow_next_click(qtbot, active,
 
     start = empty_point(bt)
     center = view.view_center()
-    mouse.drag(start, start + QPoint(40, 30))
+    mouse.drag(start, start + QPoint(40, 30), modifiers=CTRL)
     assert_close(view.view_center() - center, QPointF(-40, -30))
     assert node.GetFields() == fields
     assert view._gesture is _Gesture.IDLE
@@ -856,7 +857,7 @@ def test_window_deactivation_keeps_line_selected(qtbot, selected):
     assert ns.leaf.GetParent() is None
 
 
-def test_press_on_line_selects_it_and_dragging_from_it_pans(qtbot, active):
+def test_press_on_line_selects_it_and_dragging_from_it_selects_nodes(qtbot, active):
     bt = active
     root = bt.GetRootNode()
     leaf = bt.AddNode("Succeed", 40, 240)
@@ -869,15 +870,17 @@ def test_press_on_line_selects_it_and_dragging_from_it_pans(qtbot, active):
     assert view.hit_test(start).kind == Hit.CONNECTION
     center = view.view_center()
     leaf_pos, root_pos = QPointF(leaf._item.pos()), QPointF(root._item.pos())
+    end = view.mapFromScene(leaf._item.sceneBoundingRect().center())
 
     QTest.mousePress(view.viewport(), LEFT, NO_MOD, start)
     assert view.selected_connection() is item, "pressing on a line selects it"
     for step in range(1, 5):
-        QTest.mouseMove(view.viewport(), start + QPoint(20 * step, 10 * step))
-    QTest.mouseRelease(view.viewport(), LEFT, NO_MOD, start + QPoint(80, 40))
+        QTest.mouseMove(view.viewport(), start + (end - start) * (step / 4))
+    QTest.mouseRelease(view.viewport(), LEFT, NO_MOD, end)
 
-    assert_close(view.view_center() - center, QPointF(-80, -40))
-    assert view.selected_connection() is item and item.is_selected()
+    assert view.view_center() == center, "dragging from a line draws a selection rectangle, it does not pan"
+    assert bt.GetSelectedNodes() == [leaf]
+    assert view.selected_connection() is None and not item.is_selected()
     assert leaf._item.pos() == leaf_pos and root._item.pos() == root_pos
     assert leaf.GetParent() is root
 

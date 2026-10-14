@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from ._ui import load_ui
 from .blackboard import BlackboardStore, BlackboardView
 from .blackboard_nodes import BlackboardValueNodeWidget, EvaluationNodeWidget, SetNodeWidget
+from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget
 from .canvas import TreeView, clamp_to_scene, nearest_free_offset
 from .config import ConfigureDialog, TreeConfig
 from .execution import ExecutionState, LeafBehaviour, TreeExecutor
@@ -59,8 +60,16 @@ log = logging.getLogger("behavior_tree_widget")
 
 __all__ = ["BehaviorTreeWidget", "register_node_type", "registered_node_types"]
 
+#: Built-in leaf node types that work with the blackboard, by type name.
+BLACKBOARD_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {"Evaluation": EvaluationNodeWidget, "Set": SetNodeWidget}
+#: Built-in leaf node types that control the execution of their tree, by type name.
+EXECUTION_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {
+    "Restart": RestartNodeWidget,
+    "Pause": PauseNodeWidget,
+    "Stop": StopNodeWidget,
+}
 #: Leaf node types every BehaviorTreeWidget offers, by type name.
-BUILTIN_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {"Evaluation": EvaluationNodeWidget, "Set": SetNodeWidget}
+BUILTIN_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {**BLACKBOARD_LEAF_TYPES, **EXECUTION_LEAF_TYPES}
 #: Node types with children offered by the add-node menu, in menu order.
 PARENT_TYPES = (*COMPOSITE_TYPES, NEGATION)
 RESERVED_TYPE_NAMES = frozenset({"Root", *PARENT_TYPES, *BUILTIN_LEAF_TYPES})
@@ -337,13 +346,14 @@ class BehaviorTreeWidget(QTabWidget):
 
     def GetNodeTypes(self) -> list[str]:
         """Names of every node type that can be added: Sequence, Selector, Negation, the
-        built-in leaf types Evaluation and Set, then the registered leaf types (sorted)."""
+        built-in leaf types Evaluation, Set, Restart, Pause and Stop, then the registered leaf
+        types (sorted)."""
         registered = sorted(name for name in self._node_types if name not in BUILTIN_LEAF_TYPES)
         return [*PARENT_TYPES, *BUILTIN_LEAF_TYPES, *registered]
 
     def GetNodeType(self, type_name: str) -> type[LeafNodeWidget] | None:
-        """The leaf class of ``type_name``, including the built-in Evaluation and Set (None for
-        unknown types and for Sequence, Selector, Negation and Root)."""
+        """The leaf class of ``type_name``, including the built-in leaf types such as Evaluation
+        and Restart (None for unknown types and for Sequence, Selector, Negation and Root)."""
         return self._node_types.get(type_name)
 
     def _node_menu_entries(self) -> list[tuple[str, str, str]]:
@@ -358,7 +368,8 @@ class BehaviorTreeWidget(QTabWidget):
         def label(title: str, name: str) -> str:
             return title if titles.count(title) == 1 or name in BUILTIN_LEAF_TYPES else f"{title} ({name})"
 
-        entries += [("blackboard", name, label(title, name)) for title, name in leaves if name in BUILTIN_LEAF_TYPES]
+        entries += [("blackboard", name, label(title, name)) for title, name in leaves if name in BLACKBOARD_LEAF_TYPES]
+        entries += [("execution", name, label(title, name)) for title, name in leaves if name in EXECUTION_LEAF_TYPES]
         for title, name in sorted(leaves, key=lambda pair: (pair[0].lower(), pair[1])):
             if name not in BUILTIN_LEAF_TYPES:
                 entries.append(("leaf", name, label(title, name)))

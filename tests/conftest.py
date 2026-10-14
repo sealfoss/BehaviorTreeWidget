@@ -288,15 +288,22 @@ def label_point(bt: BehaviorTreeWidget, node, kind: str) -> QPoint:
     return viewport_point(bt, node, node.connection_label(kind))
 
 
-def drag(bt: BehaviorTreeWidget, start: QPoint, end: QPoint, steps: int = 4, release: bool = True) -> None:
-    """Press at ``start``, move to ``end`` in ``steps`` and release (left button) on the viewport."""
+def drag(
+    bt: BehaviorTreeWidget,
+    start: QPoint,
+    end: QPoint,
+    steps: int = 4,
+    release: bool = True,
+    modifiers=Qt.KeyboardModifier.NoModifier,
+) -> None:
+    """Press at ``start`` (holding ``modifiers``), move to ``end`` in ``steps`` and release (left button) on the viewport."""
     viewport = bt.view().viewport()
-    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, modifiers, start)
     for step in range(1, steps + 1):
         point = start + (end - start) * (step / steps)
         QTest.mouseMove(viewport, QPoint(round(point.x()), round(point.y())))
     if release:
-        QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, modifiers, end)
 
 
 def click(bt: BehaviorTreeWidget, point: QPoint, button=Qt.MouseButton.LeftButton) -> None:

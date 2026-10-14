@@ -5,10 +5,9 @@ behavior trees graphically**. Drop the `BehaviorTreeWidget` into your Qt applica
 your own leaf nodes in Python. Users can then draw the tree, edit node fields, run it with
 py_trees, and inspect or modify the blackboard.
 
-![BehaviorTreeWidget](docs/screenshot.png)
-
 * **Behavior Tree tab**: a pannable, zoomable canvas with a Root node, Sequence, Selector and
-  Negation nodes, the built-in Evaluation and Set blackboard nodes, and your custom leaf nodes.
+  Negation nodes, the built-in Evaluation and Set blackboard nodes, the Restart, Pause and Stop
+  execution nodes, and your custom leaf nodes.
   You draw connections with the mouse, select nodes, and copy and paste them.
 * **Blackboard tab**: named Integer, Double, String, Bool, List, Dictionary and Set entries that
   nodes read and write (`GetEntry` / `SetEntry`).
@@ -44,7 +43,7 @@ Requirements: Python ≥ 3.10, PySide6 ≥ 6.5 and py_trees ≥ 2.2.1. pip insta
 automatically.
 
 ```bash
-pip install behavior_tree_widget-0.2.0-py3-none-any.whl
+pip install behavior_tree_widget-0.5.0-py3-none-any.whl
 ```
 
 The wheel is in the `dist/` folder of this repository. See
@@ -55,7 +54,7 @@ declare it as a dependency, point to the wheel file or to a folder of wheels:
 
 ```text
 # requirements.txt
-behavior-tree-widget @ file:///C:/path/to/behavior_tree_widget-0.2.0-py3-none-any.whl
+behavior-tree-widget @ file:///C:/path/to/behavior_tree_widget-0.5.0-py3-none-any.whl
 ```
 
 ```toml
@@ -165,7 +164,7 @@ class MoveTo(LeafNodeWidget):
 | `_fields` | Dict of field name → default value. Supported types: `int` (a 32-bit spin box), `float` (a spin box with `FLOAT_DECIMALS`, default 6, decimals), `str`, `bool` and `list`. Values of other types are shown read-only. Each node gets its own deep copy of the dict. Fields are shown on the node and saved with the tree. A node without fields hides its fields frame. |
 | `RUN_IN_THREAD` | `True` (default): `OnRun` runs on a worker thread, so long operations do not freeze the UI. `False`: `OnRun` runs on the GUI thread; use this for quick checks, or when `OnRun` touches Qt widgets. |
 | `THREAD_WAIT` | Seconds (default `0.02`) the tick waits for a worker-thread `OnRun` call it has just started, so quick calls finish within one tick. With `0` the node always shows *Running* first. |
-| `TYPE_NAME` | Name used in saved files and for registration. Defaults to the class name and is not inherited by subclasses. It must be unique and must not be a built-in type name: `Root`, `Sequence`, `Selector`, `Negation`, `Evaluation` or `Set`. |
+| `TYPE_NAME` | Name used in saved files and for registration. Defaults to the class name and is not inherited by subclasses. It must be unique and must not be a built-in type name: `Root`, `Sequence`, `Selector`, `Negation`, `Evaluation`, `Set`, `Restart`, `Pause` or `Stop`. |
 | `UI_FILE` | Optional custom Qt Designer file for the node: an absolute path, or a path relative to the module that defines the class. It must contain the named widgets `Title`, `Status` and `ParentConnection`, and may contain `FrameFields` + `Fields` (QListView). |
 
 You can also assign `_title` and `_fields` in your class's `__init__`, before or after calling
@@ -235,7 +234,7 @@ executed, so saving the tree again loses nothing.
 
 ## Built-in nodes
 
-Besides the Root, Sequence and Selector, every `BehaviorTreeWidget` offers three built-in node
+Besides the Root, Sequence and Selector, every `BehaviorTreeWidget` offers six built-in node
 types in its right-click menu. They need no registration.
 
 ### Negation
@@ -291,6 +290,20 @@ setter = widget.AddNode("Set", 300, 200)
 setter.SetValueName("mode")
 setter.SetLiteralValue("patrol")
 ```
+
+### Restart, Pause and Stop
+
+Leaf nodes that control the execution of their own tree when they are reached, like the buttons:
+
+| Node | When it is ticked |
+|---|---|
+| **Restart** | Starts the tree over: every node goes back to *Ready* (and the blackboard is restored if "Restore blackboard values on Stop / Reset" is on), and the next tick starts at the Root again. Execution keeps running; this is what Reset does while the tree runs. |
+| **Pause** | Pauses the tree, like a breakpoint. The node shows *Running* while the tree is paused there; click **Execute** to continue: the node then succeeds and the tree goes on with the next node. |
+| **Stop** | Stops the tree, as the Stop button does: execution ends and every node goes back to *Ready*. `executionFinished` is not emitted. |
+
+Each one reports *Running* when it issues its command, so no node after it runs in that tick.
+A tree that reaches a Restart node on every run never ends by itself (like Loop Execution);
+press Stop to end it.
 
 ## The blackboard
 
@@ -354,14 +367,14 @@ widget.RemoveEntry("speed")
 |---|---|
 | Add a node | Right-click empty canvas and choose Sequence, Selector, Negation, Evaluation, Set or one of your leaf types. The node is placed at the click position. |
 | Add a connected node | Drag from a **Children** or **Parent** label and release over empty canvas (or a line). The Add Node menu opens there, as for a right click. The node you choose is placed where you released and connected to the label you dragged from: below a Children label, or above a Parent label (replacing an old parent). A node that cannot be connected that way, such as a leaf as a parent, is added unconnected. Closing the menu adds nothing. |
-| Delete / rename a node | Right-click the node → Delete / Rename…. The Root cannot be deleted. |
+| Delete / rename a node | Select nodes and press **Delete** (or Backspace), or right-click a node → Delete / Rename…. The Root cannot be deleted; pressing Delete with the Root selected deletes its connections instead. |
 | Change a composite | Right-click a Sequence, Selector or the Root → Sequence or Selector, and Memory on/off. |
 | Connect | Press on a **Children** label and drag to another node's **Parent** label, or the other way round. While you drag, the line is red, and turns green over a compatible label. Release there to connect; the line turns blue. Releasing over a node cancels; releasing over empty canvas opens the Add Node menu (see above). Connecting a node that already has a parent replaces its old connection, and so does connecting a second child to a Negation. Cycles are not allowed. |
 | Select / delete a connection | Click the line; it turns green. Press **Delete** (or Backspace) to delete it. Clicking anywhere else deselects it. Right-click a line → Delete Connection also works. |
-| Select nodes | Click a node; selected nodes have a blue outline. **Ctrl + click** adds or removes a node, **Shift + click** adds one. **Ctrl or Shift + drag** on empty canvas selects every node the rectangle touches. **Ctrl+A** selects all nodes. Click empty canvas (without dragging) or press **Esc** to deselect. |
+| Select nodes | Click a node; selected nodes have a blue outline. **Ctrl + click** adds or removes a node, **Shift + click** adds one. **Drag** on empty canvas (or from a line) selects every node the rectangle touches; **Shift + drag** adds them to the selection. Right-click a Sequence, Selector, Negation or the Root → **Select Children** selects it and all of its descendants. **Ctrl+A** selects all nodes. Click empty canvas (without dragging) or press **Esc** to deselect. |
 | Move nodes | Drag a node anywhere except its Parent/Children labels and input fields; dragging on a field's name works. Dragging a selected node moves every selected node. |
 | Copy and paste nodes | Select nodes, press **Ctrl+C**, then **Ctrl+V**. The copies are placed in the free area nearest to the original nodes, at least 20 pixels from every other node, keeping their arrangement and the connections between them. They become the selection, and the view scrolls to show them if needed. Each Ctrl+V pastes another set. The Root is never copied, and connections to nodes that were not copied are not copied. While an input field of a node has the keyboard, Ctrl+C / Ctrl+V / Ctrl+A act on its text instead. Copied nodes can be pasted into another BehaviorTreeWidget, also in another application; node types it does not know become placeholders. |
-| Pan | Drag empty canvas or a connection line, or drag with the middle mouse button anywhere. Panning keeps the selection. |
+| Pan | **Ctrl + drag** anywhere except on a Parent/Children label or an input field, or drag with the middle mouse button anywhere. Panning keeps the selection. |
 | Zoom | Ctrl + mouse wheel. |
 | Edit fields | Use the editors on leaf nodes; changes take effect immediately. |
 
@@ -523,8 +536,8 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
 | Method | Description |
 |---|---|
 | `RegisterNodeType(cls)` | Register a leaf class. Raises `TypeError` / `ValueError` if the class is invalid or its type name is taken. |
-| `GetNodeTypes()` | Every type that can be added: `"Sequence"`, `"Selector"`, `"Negation"`, `"Evaluation"`, `"Set"`, then the registered leaf type names (sorted). |
-| `GetNodeType(name)` | The leaf class of a type name (also `EvaluationNodeWidget` / `SetNodeWidget`), or `None` for unknown names and for Root, Sequence, Selector and Negation. |
+| `GetNodeTypes()` | Every type that can be added: `"Sequence"`, `"Selector"`, `"Negation"`, `"Evaluation"`, `"Set"`, `"Restart"`, `"Pause"`, `"Stop"`, then the registered leaf type names (sorted). |
+| `GetNodeType(name)` | The leaf class of a type name (also the built-in `EvaluationNodeWidget`, `SetNodeWidget`, `RestartNodeWidget`, `PauseNodeWidget` and `StopNodeWidget`), or `None` for unknown names and for Root, Sequence, Selector and Negation. |
 | `NewTree(path=None)`, `LoadTree(path=None)`, `SaveTree(path=None)` | File operations. Without a path, a file dialog is shown (and `False` is returned if it is cancelled); errors are shown in message boxes. With a path, `LoadTree` raises `TreeFileError` (a `ValueError`), `NewTree` raises `OSError`, and `SaveTree` raises `OSError`, `ValueError` or `TypeError`. All three return `True` on success. `LoadTree`/`NewTree` called during a tick (e.g. from `OnRun`) check the file at once and replace the tree right after the tick. |
 | `ConfirmDiscardChanges()` | Asks whether to save unsaved changes. Returns `False` if the user cancelled. |
 | `IsTreeLoaded()`, `GetFilePath()`, `IsModified()` | Tree state. |
@@ -569,6 +582,8 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
   `SetValueName(name)`, `GetCompareTo()` / `SetCompareTo(name_or_None)`, `UsesLiteral()`,
   `GetLiteralValue()` / `SetLiteralValue(value)` and `GetEffectiveLiteralValue()` (the literal
   converted to the type of the Value Name entry, as it is used). They are thread-safe.
+* `RestartNodeWidget`, `PauseNodeWidget` and `StopNodeWidget` are the built-in execution
+  control leaf nodes (see [Restart, Pause and Stop](#restart-pause-and-stop)).
 * `LeafNodeWidget`: subclass it (see above).
 * `NodeStatus`: `READY`, `RUNNING`, `SUCCEEDED`, `FAILED` (values `"Ready"`, …).
 * `Status` is a re-export of `py_trees.common.Status`, for `OnRun` return values.
@@ -600,7 +615,7 @@ python -m venv .venv
 .venv/Scripts/pip install -e ".[test]"      # Windows (use .venv/bin/pip elsewhere)
 .venv/Scripts/python -m pytest              # runs the test suite offscreen
 .venv/Scripts/pip install build
-.venv/Scripts/python -m build               # -> dist/behavior_tree_widget-0.2.0-py3-none-any.whl
+.venv/Scripts/python -m build               # -> dist/behavior_tree_widget-0.5.0-py3-none-any.whl
 ```
 
 ```
@@ -611,6 +626,7 @@ src/behavior_tree_widget/
     canvas.py          graphics view: nodes, connections, mouse gestures, context menus
     nodes.py           NodeWidget, RootNodeWidget, CompositeNodeWidget, NegationNodeWidget, LeafNodeWidget
     blackboard_nodes.py  the built-in Evaluation and Set leaf nodes
+    control_nodes.py   the built-in Restart, Pause and Stop leaf nodes
     execution.py       py_trees adapter and ticking
     blackboard.py      blackboard store (py_trees backed) and the Blackboard tab
     serialization.py   JSON file format
@@ -622,7 +638,6 @@ src/behavior_tree_widget/
                        NegationNode.ui, EvaluationNode.ui and SetNode.ui
 tests/                 pytest + pytest-qt test suite
 examples/              example application
-docs/                  screenshots
 ```
 
 ## Notes and design decisions
