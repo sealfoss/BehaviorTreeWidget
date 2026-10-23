@@ -7,6 +7,7 @@ test can block; tests configure the answers they need through that fixture.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -18,7 +19,7 @@ if os.path.isdir("C:/Windows/Fonts"):
 import pytest  # noqa: E402
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox  # noqa: E402
 
 from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status  # noqa: E402
 from behavior_tree_widget.blackboard import BlackboardView  # noqa: E402
@@ -322,3 +323,21 @@ def fast_config(bt: BehaviorTreeWidget, **changes) -> None:
     for key, value in changes.items():
         setattr(config, key, value)
     bt.SetConfig(config)
+
+
+def file_blackboard(path) -> list:
+    """The "blackboard" section of the tree file at ``path``."""
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream).get("blackboard")
+
+
+def assert_blackboard_in_file(bt: BehaviorTreeWidget, timeout: float = 3.0) -> None:
+    """Wait until the tree file holds the current blackboard; nothing is then left unsaved by it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        QApplication.processEvents()
+        if file_blackboard(bt.GetFilePath()) == bt.blackboardStore().to_list(quiet=True):
+            break
+        assert time.monotonic() < deadline, "the blackboard was not written to the tree file"
+        time.sleep(0.01)
+    assert not bt.IsModified(), "blackboard changes are written to the file, they are not unsaved changes"

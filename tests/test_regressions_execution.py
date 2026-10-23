@@ -33,7 +33,8 @@ from PySide6.QtWidgets import QLabel
 
 from behavior_tree_widget import BehaviorTreeWidget, ExecutionCancelled, LeafNodeWidget, NodeStatus
 from behavior_tree_widget.execution import LeafBehaviour
-from conftest import Succeed, fast_config, run_until_idle
+from behavior_tree_widget.serialization import write_json_atomic
+from conftest import Succeed, assert_blackboard_in_file, fast_config, run_until_idle
 
 READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
 LOGGER = "behavior_tree_widget"
@@ -415,17 +416,15 @@ def save(bt) -> None:
 
 
 def make_other_tree_file(qtbot, bt, path) -> bool:
-    """Save a tree file with a single Integer entry y = 3 using a throw-away blackboard state.
+    """Write a tree file like the current tree, with an Integer entry y = 3 added to its blackboard.
 
-    The widget keeps its own file afterwards (SaveTree(path) switches the current file).
+    The widget keeps its own file and blackboard. (Saving there and removing y again would
+    write the removal into that file: blackboard changes go to the current tree file.)
     """
-    original = bt.GetFilePath()
-    bt.AddEntry("y", "Integer", 3)
-    ok = bt.SaveTree(path)
-    bt.RemoveEntry("y")
-    if original:
-        assert bt.SaveTree(original)
-    return ok
+    data = bt._tree_data(quiet=True)
+    data["blackboard"] = [*data["blackboard"], {"name": "y", "type": "Integer", "value": 3}]
+    write_json_atomic(str(path), data)
+    return True
 
 
 # ============================================================================ one OnRun call per node
@@ -1234,7 +1233,7 @@ def test_user_edits_in_editors_mark_the_tree_modified(qtbot, bt):
     save(bt)
     bt.blackboardView().row("counter").value_widget.setValue(77)
     assert bt.GetEntry("counter") == 77
-    assert bt.IsModified() is True
+    assert_blackboard_in_file(bt)  # blackboard edits are written to the tree file at once
 
 
 def test_edits_while_paused_programmatic_are_runtime_user_edits_are_not(qtbot, bt):
@@ -1262,7 +1261,7 @@ def test_edits_while_paused_programmatic_are_runtime_user_edits_are_not(qtbot, b
     save(bt)
     bt.blackboardView().row("counter").value_widget.setValue(9)
     assert bt.GetEntry("counter") == 9
-    assert bt.IsModified() is True
+    assert_blackboard_in_file(bt)  # blackboard edits are written to the tree file at once
     bt.Stop()
 
 

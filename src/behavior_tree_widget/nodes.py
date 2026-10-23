@@ -9,6 +9,8 @@ Four kinds of nodes exist:
 * :class:`LeafNodeWidget` - the base class for user defined nodes. Subclasses
   override :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
 
+(The Notes node, which documents the tree and is not part of it, is in :mod:`.notes`.)
+
 Example::
 
     class MoveTo(LeafNodeWidget):

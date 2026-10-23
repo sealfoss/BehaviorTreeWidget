@@ -71,6 +71,7 @@ def test_a_command_delivered_inside_a_dialog_opened_by_a_chaining_handler(qtbot,
 
 def test_saving_from_the_unsaved_changes_prompt_reports_what_was_left_out(widget, dialogs):
     widget.SetEntry([object()], "unsaveable")
+    widget.GetRootNode().SetMemory(False)  # an unsaved edit (blackboard changes are written at once)
     assert widget.IsModified()
     dialogs.question_answer = QMessageBox.StandardButton.Save
     assert widget.ConfirmDiscardChanges()

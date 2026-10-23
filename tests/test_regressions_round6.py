@@ -21,7 +21,7 @@ from behavior_tree_widget import LeafNodeWidget, NodeStatus, Status
 from behavior_tree_widget import demo
 from behavior_tree_widget.blackboard import FloatSpinBox
 
-from conftest import fast_config, run_until_idle
+from conftest import assert_blackboard_in_file, fast_config, run_until_idle
 
 DBL_MAX = sys.float_info.max
 
@@ -249,7 +249,7 @@ def test_typing_zero_over_nan_stores_zero(widget, double_row):
     spin.selectAll()
     QTest.keyClicks(spin, "0")
     assert widget.GetEntry("d") == 0.0
-    assert widget.IsModified()
+    assert_blackboard_in_file(widget)
     QTest.keyClick(spin, Qt.Key.Key_Return)
     assert widget.GetEntry("d") == 0.0 and spin.text() == "0.0"
 

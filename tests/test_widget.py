@@ -50,6 +50,7 @@ from conftest import (
     FailNode,
     SlowCancelable,
     Succeed,
+    assert_blackboard_in_file,
     click,
     drag,
     fast_config,
@@ -1138,9 +1139,11 @@ EDITS = {
     "SetFieldSelectionIndex": lambda bt, connected, loose: connected.SetFieldSelectionIndex("choice", 1),
     "SetCompositeType": lambda bt, connected, loose: bt.GetRootNode().SetCompositeType("Selector"),
     "SetMemory": lambda bt, connected, loose: bt.GetRootNode().SetMemory(False),
-    "SetEntry": lambda bt, connected, loose: bt.SetEntry(3, "counter"),
-    "AddEntry": lambda bt, connected, loose: bt.AddEntry("names", "List", ["a"]),
     "SetConfig": lambda bt, connected, loose: fast_config(bt),
+}
+BLACKBOARD_EDITS = {
+    "SetEntry": lambda bt: bt.SetEntry(3, "counter"),
+    "AddEntry": lambda bt: bt.AddEntry("names", "List", ["a"]),
 }
 
 
@@ -1152,6 +1155,16 @@ def test_edits_mark_tree_modified(saved_bt, edit):
     EDITS[edit](bt, connected, loose)
     assert bt.IsModified() is True
     assert changes == [True]
+
+
+@pytest.mark.parametrize("edit", list(BLACKBOARD_EDITS))
+def test_blackboard_edits_are_written_to_the_tree_file(saved_bt, edit):
+    bt, connected, loose = saved_bt
+    changes = []
+    bt.modifiedChanged.connect(changes.append)
+    BLACKBOARD_EDITS[edit](bt)
+    assert_blackboard_in_file(bt)
+    assert changes == []
 
 
 def test_memory_menu_action_marks_modified(saved_bt):
@@ -1579,12 +1592,13 @@ def test_widget_registration_is_local_to_the_widget(make_widget, clean_registry)
 def test_get_node_types_lists_composites_then_sorted_leaves(make_widget, clean_registry):
     widget = make_widget(node_types=[Succeed, FailNode, AllFields])
     assert widget.GetNodeTypes() == [
-        "Sequence", "Selector", "Negation", "Evaluation", "Set", "Restart", "Pause", "Stop",
-        "AllFields", "FailNode", "Succeed",
+        "Sequence", "Selector", "Negation", "Evaluation", "Set", "Restart", "Pause", "Stop", "UDP Message",
+        "AllFields", "FailNode", "Succeed", "Notes",
     ]
     assert widget.GetNodeType("Succeed") is Succeed
     assert widget.GetNodeType("Sequence") is None
     assert widget.GetNodeType("Negation") is None
+    assert widget.GetNodeType("Notes") is None
     assert widget.GetNodeType("Unknown") is None
 
 

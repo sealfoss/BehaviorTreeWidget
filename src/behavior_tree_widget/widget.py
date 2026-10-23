@@ -6,8 +6,10 @@ import atexit
 import functools
 import json
 import logging
+import math
 import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -34,6 +36,7 @@ from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget
 from .canvas import TreeView, clamp_to_scene, nearest_free_offset
 from .config import ConfigureDialog, TreeConfig
 from .execution import ExecutionState, LeafBehaviour, TreeExecutor
+from .network_nodes import UDP_MESSAGE, UdpMessageNodeWidget
 from .nodes import (
     COMPOSITE_TYPES,
     NEGATION,
@@ -45,6 +48,7 @@ from .nodes import (
     RootNodeWidget,
     UnknownLeafNodeWidget,
 )
+from .notes import NOTES, NotesNodeWidget
 from .serialization import (
     FORMAT_NAME,
     FORMAT_VERSION,
@@ -68,11 +72,21 @@ EXECUTION_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {
     "Pause": PauseNodeWidget,
     "Stop": StopNodeWidget,
 }
+#: Built-in leaf node types that communicate over the network, by type name.
+NETWORK_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {UDP_MESSAGE: UdpMessageNodeWidget}
 #: Leaf node types every BehaviorTreeWidget offers, by type name.
-BUILTIN_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {**BLACKBOARD_LEAF_TYPES, **EXECUTION_LEAF_TYPES}
+BUILTIN_LEAF_TYPES: dict[str, type[LeafNodeWidget]] = {
+    **BLACKBOARD_LEAF_TYPES,
+    **EXECUTION_LEAF_TYPES,
+    **NETWORK_LEAF_TYPES,
+}
 #: Node types with children offered by the add-node menu, in menu order.
 PARENT_TYPES = (*COMPOSITE_TYPES, NEGATION)
-RESERVED_TYPE_NAMES = frozenset({"Root", *PARENT_TYPES, *BUILTIN_LEAF_TYPES})
+#: Built-in type names added after version 0.5.0. Applications may already use them for leaf
+#: types of their own: such a type keeps the name in the widgets it is registered with (the
+#: built-in node is then not offered there), so the application and its trees work as before.
+YIELDING_TYPE_NAMES = frozenset({UDP_MESSAGE, NOTES})
+RESERVED_TYPE_NAMES = frozenset({"Root", *PARENT_TYPES, *BUILTIN_LEAF_TYPES}) - YIELDING_TYPE_NAMES
 BUTTON_NAMES = ("Execute", "Pause", "Stop", "Reset", "Configure", "Save", "Load", "New")
 LOOP_CHECKBOX_NAME = "LoopExecution"
 #: Clipboard format of copied nodes: JSON holding "nodes" and "connections" as in tree files.
@@ -153,7 +167,7 @@ def _validate_leaf_class(cls: Any) -> str:
 def _register(registry: dict[str, type[LeafNodeWidget]], cls: type[LeafNodeWidget]) -> str:
     name = _validate_leaf_class(cls)
     existing = registry.get(name)
-    if existing is not None and existing is not cls:
+    if existing is not None and existing is not cls and not (name in YIELDING_TYPE_NAMES and existing is BUILTIN_LEAF_TYPES.get(name)):
         raise ValueError(
             f"node type name {name!r} is already registered to {existing.__module__}.{existing.__qualname__}; "
             f"give {cls.__qualname__} a different TYPE_NAME"
@@ -192,6 +206,7 @@ class _TreePlan:
     config: TreeConfig = field(default_factory=TreeConfig)
     zoom: float | None = None
     center: QPointF | None = None
+    document: dict | None = None  # the file's data (kept to write blackboard changes into)
 
     def discard(self) -> None:
         for node, _ in self.nodes:
@@ -201,6 +216,21 @@ class _TreePlan:
 
 
 STANDARD_NODE_KEYS = frozenset({"id", "type", "title", "x", "y", "fields", "field_selections"})
+NOTE_KEYS = frozenset({"text", "width", "height"})
+
+
+def _saved_as_builtin(type_name: str, item: dict) -> bool:
+    """Whether a saved node of a type in YIELDING_TYPE_NAMES was saved by the built-in node.
+
+    Before these types were built in, an application could save leaf nodes of its own with
+    these names; their data must not be read as (and lost to) the built-in node's.
+    """
+    if type_name == NOTES:
+        # Notes write text / width / height; a leaf writes "fields" (version 0.5.0 also adds an
+        # empty "fields" to a note it kept as a placeholder).
+        return bool(NOTE_KEYS & item.keys()) or "fields" not in item
+    fields = item.get("fields")
+    return not isinstance(fields, dict) or set(fields) <= set(BUILTIN_LEAF_TYPES[type_name]._fields)
 
 
 def _cleanup_after_destroy(store: BlackboardStore, executor: TreeExecutor) -> None:
@@ -236,11 +266,16 @@ class BehaviorTreeWidget(QTabWidget):
     nodeStatusChanged = Signal(object, str)  # node, "Ready"/"Running"/"Succeeded"/"Failed"
     nodeError = Signal(object, str)  # node, error message
     nodeSelectionChanged = Signal()  # the selected nodes changed (GetSelectedNodes)
+    blackboardSaved = Signal(str)  # path the changed blackboard was written to
+    blackboardSaveFailed = Signal(str)  # error message: the changed blackboard could not be written
 
     TREE_TAB_TITLE = "Behavior Tree"
     BLACKBOARD_TAB_TITLE = "Blackboard"
     FILE_FILTER = "Behavior Tree (*.json);;All Files (*)"
     WINDOW_TITLE_FORMAT = "Behavior Tree - {filename}"
+    #: Blackboard changes are written to the tree file at most this often (ms); changes made in
+    #: between are written together at the end of the interval.
+    BLACKBOARD_SAVE_INTERVAL_MS = 250
 
     def __init__(self, parent: QWidget | None = None, node_types: Iterable[type[LeafNodeWidget]] = ()):
         super().__init__(parent)
@@ -260,6 +295,16 @@ class BehaviorTreeWidget(QTabWidget):
         self._view_timer = QTimer(self)
         self._view_timer.setSingleShot(True)
         self._view_timer.timeout.connect(self._apply_pending_view_target)
+        # The document in the tree file as last written or read: blackboard changes are written
+        # into it (other unsaved edits stay unsaved until Save).
+        self._file_document: dict | None = None
+        self._blackboard_save_pending = False
+        self._blackboard_save_error: str | None = None
+        self._blackboard_skipped: set[str] = set()  # values that cannot be written, reported once each
+        self._last_blackboard_save = 0.0  # time.monotonic() of the last write
+        self._blackboard_timer = QTimer(self)
+        self._blackboard_timer.setSingleShot(True)
+        self._blackboard_timer.timeout.connect(self._save_blackboard_now)
 
         # ---- "Behavior Tree" tab (BehaviorTreeView.ui)
         self._tree_page = load_ui("BehaviorTreeView.ui")
@@ -316,6 +361,7 @@ class BehaviorTreeWidget(QTabWidget):
         self._view.navigated.connect(self._on_view_navigated)
         self._blackboard_view.entryEdited.connect(self._on_blackboard_edited)
         self._blackboard.changed.connect(self._on_blackboard_changed)
+        self._blackboard.entriesReordered.connect(self._on_blackboard_reordered)
 
         app = QCoreApplication.instance()
         if app is not None:
@@ -346,15 +392,29 @@ class BehaviorTreeWidget(QTabWidget):
 
     def GetNodeTypes(self) -> list[str]:
         """Names of every node type that can be added: Sequence, Selector, Negation, the
-        built-in leaf types Evaluation, Set, Restart, Pause and Stop, then the registered leaf
-        types (sorted)."""
-        registered = sorted(name for name in self._node_types if name not in BUILTIN_LEAF_TYPES)
-        return [*PARENT_TYPES, *BUILTIN_LEAF_TYPES, *registered]
+        built-in leaf types Evaluation, Set, Restart, Pause, Stop and UDP Message, the
+        registered leaf types (sorted), then Notes."""
+        builtin = [name for name in BUILTIN_LEAF_TYPES if self._is_builtin(name)]
+        registered = sorted(name for name in self._node_types if not self._is_builtin(name))
+        return [*PARENT_TYPES, *builtin, *registered, *([NOTES] if self._offers_notes() else [])]
 
     def GetNodeType(self, type_name: str) -> type[LeafNodeWidget] | None:
         """The leaf class of ``type_name``, including the built-in leaf types such as Evaluation
-        and Restart (None for unknown types and for Sequence, Selector, Negation and Root)."""
+        and Restart (None for unknown types and for Sequence, Selector, Negation, Root and Notes)."""
         return self._node_types.get(type_name)
+
+    def _is_builtin(self, type_name: str) -> bool:
+        """True if ``type_name`` is a built-in leaf type of this widget (not an application's own type)."""
+        cls = self._node_types.get(type_name)
+        return cls is not None and cls is BUILTIN_LEAF_TYPES.get(type_name)
+
+    def _has_builtin(self, type_name: str) -> bool:
+        """True if ``type_name`` names a built-in node type in this widget (Notes or a built-in leaf)."""
+        return self._offers_notes() if type_name == NOTES else self._is_builtin(type_name)
+
+    def _offers_notes(self) -> bool:
+        """False when an application registered a leaf type of its own named "Notes"."""
+        return NOTES not in self._node_types
 
     def _node_menu_entries(self) -> list[tuple[str, str, str]]:
         """``(group, type_name, label)`` of every type offered by the add-node menu."""
@@ -366,13 +426,19 @@ class BehaviorTreeWidget(QTabWidget):
         titles = [title for title, _ in leaves]
 
         def label(title: str, name: str) -> str:
-            return title if titles.count(title) == 1 or name in BUILTIN_LEAF_TYPES else f"{title} ({name})"
+            return title if titles.count(title) == 1 or self._is_builtin(name) else f"{title} ({name})"
 
-        entries += [("blackboard", name, label(title, name)) for title, name in leaves if name in BLACKBOARD_LEAF_TYPES]
-        entries += [("execution", name, label(title, name)) for title, name in leaves if name in EXECUTION_LEAF_TYPES]
+        for group, types in (
+            ("blackboard", BLACKBOARD_LEAF_TYPES),
+            ("execution", EXECUTION_LEAF_TYPES),
+            ("network", NETWORK_LEAF_TYPES),
+        ):
+            entries += [(group, name, label(title, name)) for title, name in leaves if name in types and self._is_builtin(name)]
         for title, name in sorted(leaves, key=lambda pair: (pair[0].lower(), pair[1])):
-            if name not in BUILTIN_LEAF_TYPES:
+            if not self._is_builtin(name):
                 entries.append(("leaf", name, label(title, name)))
+        if self._offers_notes():
+            entries.append(("notes", NOTES, NOTES))
         return entries
 
     def _create_node(self, type_name: str) -> NodeWidget:
@@ -380,6 +446,8 @@ class BehaviorTreeWidget(QTabWidget):
             return CompositeNodeWidget(type_name, memory=self._config.default_memory)
         if type_name == NEGATION:
             return NegationNodeWidget()
+        if type_name == NOTES and self._offers_notes():
+            return NotesNodeWidget()
         cls = self._node_types.get(type_name)
         if cls is None:
             raise ValueError(f"unknown node type {type_name!r}")
@@ -401,9 +469,9 @@ class BehaviorTreeWidget(QTabWidget):
     def AddNode(self, node_type: str | type[LeafNodeWidget] | NodeWidget, x: float = 0.0, y: float = 0.0) -> NodeWidget:
         """Add a node with its top-left corner at scene position (x, y) and return it.
 
-        ``node_type`` is a type name ("Sequence", "Selector" or a registered leaf
-        type), a leaf class or a leaf node instance (their class is registered
-        automatically).
+        ``node_type`` is a type name (one of :meth:`GetNodeTypes`, e.g. "Sequence" or
+        "Notes"), a leaf class or a node instance other than a Root (the class of a leaf
+        is registered automatically).
 
         Raises:
             RuntimeError: the tree is executing.
@@ -417,6 +485,8 @@ class BehaviorTreeWidget(QTabWidget):
                 _register(self._node_types, type(node))
             elif isinstance(node, RootNodeWidget):
                 raise ValueError("a tree can only have one root node")
+            elif isinstance(node, NotesNodeWidget) and not self._offers_notes():
+                raise ValueError(f"{NOTES!r} is the name of a registered leaf type in this widget; notes are not available")
         elif isinstance(node_type, type):
             _register(self._node_types, node_type)
             node = node_type()
@@ -711,6 +781,8 @@ class BehaviorTreeWidget(QTabWidget):
 
     def _save_tree(self, path: str, report_problems: bool) -> None:
         """Write the tree to ``path``; with ``report_problems`` the user is told what was left out."""
+        if path != self._file_path:
+            self._flush_blackboard_save()  # blackboard changes still due for the current file
         problems: list[str] = []
         data = self._tree_data(problems)
         try:
@@ -722,6 +794,10 @@ class BehaviorTreeWidget(QTabWidget):
             data = self._tree_data(problems, check_raw=True)
             write_json_atomic(path, data)
         self._file_path = path
+        self._file_document = data
+        self._blackboard_save_pending = False  # written with the rest of the tree
+        self._blackboard_timer.stop()
+        self._blackboard_save_error = None
         self._set_tree_loaded(True)
         self._set_modified(False)
         self._update_window_title()
@@ -768,6 +844,7 @@ class BehaviorTreeWidget(QTabWidget):
             return
         self._shut_down = True
         self._executor.shutdown()
+        self._flush_blackboard_save()
         self._blackboard.dispose()
         if shiboken6.isValid(self):
             self._update_buttons()
@@ -839,16 +916,77 @@ class BehaviorTreeWidget(QTabWidget):
             self._mark_modified()
 
     def _on_blackboard_changed(self, runtime: bool) -> None:
-        if not runtime:
+        if self._loading:
+            return  # the blackboard of the file being installed
+        if self._writes_blackboard():
+            self._schedule_blackboard_save()  # changes by the user and by the tree are written to the file
+        elif not runtime:
             self._mark_modified()
-            if not self._loading and self._executor.state() is ExecutionState.IDLE:
-                # A deliberate edit after a run: Reset must not silently undo it.
-                self._executor.discard_snapshot()
+        if not runtime and self._executor.state() is ExecutionState.IDLE:
+            # A deliberate edit after a run: Reset must not silently undo it.
+            self._executor.discard_snapshot()
 
     def _on_blackboard_edited(self, *_args) -> None:
-        self._mark_modified()
+        if not self._writes_blackboard():
+            self._mark_modified()
         if self._executor.state() is ExecutionState.IDLE:
             self._executor.discard_snapshot()
+
+    def _on_blackboard_reordered(self) -> None:
+        if not self._loading and self._writes_blackboard():
+            self._schedule_blackboard_save()
+
+    # ================================================================== internals: blackboard file updates
+    def _writes_blackboard(self) -> bool:
+        """True while blackboard changes are written to the tree file (a tree was created, loaded or saved)."""
+        return self._tree_loaded and bool(self._file_path) and self._file_document is not None and not self._shut_down
+
+    def _schedule_blackboard_save(self) -> None:
+        """Write the blackboard soon: at once from the event loop, or at the end of the current interval."""
+        self._blackboard_save_pending = True
+        if not self._blackboard_timer.isActive():
+            elapsed_ms = (time.monotonic() - self._last_blackboard_save) * 1000.0
+            self._blackboard_timer.start(max(0, math.ceil(self.BLACKBOARD_SAVE_INTERVAL_MS - elapsed_ms)))
+
+    def _flush_blackboard_save(self) -> None:
+        """Write blackboard changes that are still due (before the file or the blackboard goes away)."""
+        if self._blackboard_save_pending:
+            self._save_blackboard_now()
+
+    def _save_blackboard_now(self) -> None:
+        """Write the blackboard into the tree file; the rest of the file stays as last saved."""
+        self._blackboard_timer.stop()
+        if not self._blackboard_save_pending:
+            return
+        self._blackboard_save_pending = False
+        document, path = self._file_document, self._file_path
+        if document is None or not path or self._blackboard.is_disposed():
+            return
+        problems: list[str] = []
+        blackboard = self._blackboard.to_list(problems, quiet=True)
+        for problem in problems:  # e.g. a value of a type that cannot be written as JSON
+            if problem not in self._blackboard_skipped:
+                self._blackboard_skipped.add(problem)
+                log.warning("%s", problem)
+        if blackboard == document.get("blackboard") and self._blackboard_save_error is None:
+            return  # e.g. only Object entries (never saved) changed
+        updated = {**document, "blackboard": blackboard}
+        self._last_blackboard_save = time.monotonic()
+        try:
+            write_json_atomic(path, updated)
+        except SAVE_ERRORS as error:
+            message = f"Could not write the blackboard to '{path}': {error}"
+            if message != self._blackboard_save_error:
+                log.warning("%s", message)
+            self._blackboard_save_error = message
+            self._set_modified(True)  # the changes are not in the file: Save and the close prompt offer to save them
+            self.blackboardSaveFailed.emit(message)
+            return
+        self._file_document = updated
+        if self._blackboard_save_error is not None:
+            log.info("the blackboard was written to '%s' again", path)
+            self._blackboard_save_error = None
+        self.blackboardSaved.emit(path)
 
     def _update_buttons(self) -> None:
         state = self._executor.state()
@@ -896,6 +1034,8 @@ class BehaviorTreeWidget(QTabWidget):
         self._view_target_pending = False
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self.isWindow():
+            self._flush_blackboard_save()
         if self.isWindow() and not self.ConfirmDiscardChanges():
             event.ignore()
             return
@@ -1221,6 +1361,16 @@ class BehaviorTreeWidget(QTabWidget):
                 node = CompositeNodeWidget(type_name)
             elif type_name == NEGATION:
                 node = NegationNodeWidget()
+            elif (
+                type_name in YIELDING_TYPE_NAMES
+                and self._has_builtin(type_name)
+                and not _saved_as_builtin(type_name, item)
+            ):
+                # Saved by an application's own leaf type of that name, which is not registered now.
+                problems.append(f"node type {type_name!r} is not registered; a placeholder node was created")
+                node = UnknownLeafNodeWidget(type_name)
+            elif type_name == NOTES and self._offers_notes():
+                node = NotesNodeWidget()
             elif type_name in self._node_types:
                 try:
                     node = self._node_types[type_name]()
@@ -1342,6 +1492,7 @@ class BehaviorTreeWidget(QTabWidget):
             raise
         except Exception as error:  # noqa: BLE001
             raise TreeFileError(f"'{os.path.basename(path)}' could not be loaded: {error}") from error
+        plan.document = data
 
         if not self._executor.is_busy():
             self._executor.discard_snapshot()  # the blackboard is replaced by the file anyway
@@ -1361,6 +1512,7 @@ class BehaviorTreeWidget(QTabWidget):
     def _install_loaded_tree(
         self, plan: _TreePlan, path: str, interactive: bool, problems: list[str], deferred: bool = False
     ) -> None:
+        self._flush_blackboard_save()  # changes still due for the file being replaced
         previous_tree = previous_blackboard = None
         if self._view.nodes():
             try:
@@ -1393,6 +1545,11 @@ class BehaviorTreeWidget(QTabWidget):
             self._loading = False
 
         self._file_path = path
+        self._file_document = plan.document
+        self._blackboard_save_pending = False  # the blackboard is the file's
+        self._blackboard_timer.stop()
+        self._blackboard_save_error = None
+        self._blackboard_skipped.clear()
         self._set_tree_loaded(True)
         self._set_modified(False)
         self._update_buttons()

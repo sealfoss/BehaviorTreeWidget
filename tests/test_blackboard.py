@@ -52,7 +52,7 @@ from behavior_tree_widget.blackboard import (
     parse_container_text,
 )
 
-from conftest import fast_config, run_until_idle
+from conftest import assert_blackboard_in_file, fast_config, run_until_idle
 
 USER_TYPES = ["Integer", "Double", "String", "Bool", "List", "Dictionary", "Set"]
 ALL_TYPES = USER_TYPES + ["Object"]
@@ -1274,7 +1274,7 @@ def test_add_entry_button_adds_every_type(bt, view, dialogs, tmp_path, type_name
     row = view.row("new_entry")
     assert row is not None and row.type_name == type_name
     assert layout_names(view) == ["new_entry"]
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 @pytest.mark.parametrize("type_name", USER_TYPES)
@@ -1451,7 +1451,7 @@ def test_remove_entries_removes_only_selected(bt, view, tmp_path):
     assert not view.select_all.isChecked()
     store = bt.blackboardStore()
     assert storage_keys(store.namespace()) == {store.key("a"), store.key("c")}
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_remove_entries_after_select_all_removes_everything(bt, view):
@@ -1499,7 +1499,7 @@ def test_editing_value_widgets_updates_store_immediately(bt, view, tmp_path, typ
     value = bt.GetEntry("entry")
     assert value == expected and type(value) is type(expected)
     assert bt.GetEntryType("entry") == type_name
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_typing_into_integer_and_string_rows(qtbot, bt, view):
@@ -1595,7 +1595,7 @@ def test_rename_via_value_name(qtbot, bt, view, tmp_path):
     assert view.row("new name") is row and view.row("old") is None
     assert row.name == "new name" and row.name_edit.text() == "new name"
     assert layout_names(view) == ["a", "new name", "c"]
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_rename_via_value_name_strips_spaces(bt, view):
@@ -1650,7 +1650,7 @@ def test_container_edit_button_changes_value(bt, view, dialogs, tmp_path, type_n
     assert bt.GetEntryType("box") == type_name
     combo = row.value_widget
     assert [combo.itemText(i) for i in range(combo.count())] == items
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 @pytest.mark.parametrize(
@@ -1709,7 +1709,7 @@ def test_container_edit_dialog_cancel_keeps_value(bt, view, dialogs, tmp_path):
 
 
 @pytest.mark.parametrize("action", ["add", "remove", "rename", "edit_value", "edit_container"])
-def test_ui_edits_mark_tree_modified(bt, view, dialogs, tmp_path, action):
+def test_ui_edits_are_written_to_the_tree_file(bt, view, dialogs, tmp_path, action):
     bt.AddEntry("number", "Integer", 1)
     bt.AddEntry("items", "List", [1])
     mark_saved(bt, tmp_path)
@@ -1735,8 +1735,8 @@ def test_ui_edits_mark_tree_modified(bt, view, dialogs, tmp_path, action):
 
         dialogs.dialog_handler = handler
         view.row("items").edit_button.click()
-    assert bt.IsModified()
-    assert modified_signals == [True]
+    assert_blackboard_in_file(bt)
+    assert modified_signals == []
 
 
 def test_selection_changes_do_not_mark_tree_modified(bt, view, tmp_path):

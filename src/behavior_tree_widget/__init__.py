@@ -38,6 +38,7 @@ from .blackboard import BlackboardStore, BlackboardView  # noqa: E402
 from .blackboard_nodes import EvaluationNodeWidget, SetNodeWidget  # noqa: E402
 from .config import TreeConfig  # noqa: E402
 from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget  # noqa: E402
+from .network_nodes import UdpMessageNodeWidget  # noqa: E402
 from .nodes import (  # noqa: E402
     CompositeNodeWidget,
     LeafNodeWidget,
@@ -47,10 +48,11 @@ from .nodes import (  # noqa: E402
     RootNodeWidget,
     UnknownLeafNodeWidget,
 )
+from .notes import NotesNodeWidget  # noqa: E402
 from .serialization import TreeFileError  # noqa: E402
 from .widget import BehaviorTreeWidget, register_node_type, registered_node_types  # noqa: E402
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "BehaviorTreeWidget",
@@ -63,6 +65,7 @@ __all__ = [
     "NegationNodeWidget",
     "NodeStatus",
     "NodeWidget",
+    "NotesNodeWidget",
     "PauseNodeWidget",
     "RestartNodeWidget",
     "RootNodeWidget",
@@ -71,6 +74,7 @@ __all__ = [
     "StopNodeWidget",
     "TreeConfig",
     "TreeFileError",
+    "UdpMessageNodeWidget",
     "UnknownLeafNodeWidget",
     "register_node_type",
     "registered_node_types",
