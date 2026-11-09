@@ -12,9 +12,10 @@ When an entry is chosen, the node prints ``<entry name> = <value>`` (a String en
 it is, other values as Python literals). The choices are the node's fields and are saved with
 the tree: ``Level`` (an int, 0 - 4), ``Source`` (an entry name, or ``None`` for the literal)
 and ``Message``. The node follows entries that are renamed and keeps its choice when the entry
-disappears (it is then shown as missing, in red). It succeeds once the message was handed to
-the log (also when the log level of the tree drops it) and fails with an error when the chosen
-entry does not exist.
+disappears (it is then shown as missing, in red); see
+:class:`~behavior_tree_widget.blackboard_aware.BlackboardAwareLeaf`. It succeeds once the
+message was handed to the log (also when the log level of the tree drops it) and fails with an
+error when the chosen entry does not exist.
 """
 
 from __future__ import annotations
@@ -23,13 +24,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import shiboken6
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QSizePolicy, QWidget
 
+from ._qt import set_text_quietly
 from .blackboard import safe_repr
-from .blackboard_nodes import LITERAL, PROBLEM_COLOR, _show_problem
-from .nodes import LeafNodeWidget, _guard_wheel
+from .blackboard_aware import LITERAL, BlackboardAwareLeaf, ComboItem, EntryComboBox
+from .nodes import _guard_wheel
 from .tree_log import LogLevel
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -48,26 +49,33 @@ def value_text(value: Any) -> str:
     return value if isinstance(value, str) else safe_repr(value)
 
 
-class PrintMessageNodeWidget(LeafNodeWidget):
-    """Writes ``Message`` (or the value of the ``Source`` entry) to the tree's log at ``Level``."""
+class PrintMessageNodeWidget(BlackboardAwareLeaf):
+    """Writes ``Message`` (or the value of the ``Source`` entry) to the tree's log at ``Level``.
+
+    The ``Source`` combo box of the ui file is replaced by an :class:`EntryComboBox` with the
+    same name, place, tooltip and size policy.
+    """
 
     UI_FILE = "PrintNode.ui"
     TYPE_NAME = PRINT_MESSAGE
     _title = PRINT_MESSAGE
-    RUN_IN_THREAD = False
     LEVEL_FIELD = "Level"
     SOURCE_FIELD = "Source"
     MESSAGE_FIELD = "Message"
+    ENTRY_FIELDS = (SOURCE_FIELD,)
     _fields = {LEVEL_FIELD: int(DEFAULT_LEVEL), SOURCE_FIELD: None, MESSAGE_FIELD: ""}
 
     def __init__(self, parent: QWidget | None = None):
-        self._store = None  # BlackboardStore of the tree the node was added to
+        self._level_box: QComboBox | None = None
+        self._source_box: EntryComboBox | None = None
+        self._message_edit: QLineEdit | None = None
+        self._message_label: QLabel | None = None
+        self._laid_out = False  # the editors were laid out once
         super().__init__(parent)
-        self._level_box: QComboBox = self._require_child(QComboBox, "LogLevel")
-        self._source_box: QComboBox = self._require_child(QComboBox, "Source")
-        self._message_edit: QLineEdit = self._require_child(QLineEdit, "Message")
-        self._message_label: QLabel | None = self._find_child(QLabel, "MessageLabel")
-        self._source_tooltip = self._source_box.toolTip()
+        self._level_box = self._require_child(QComboBox, "LogLevel")
+        self._source_box = EntryComboBox.replacing(self._require_child(QComboBox, "Source"))
+        self._message_edit = self._require_child(QLineEdit, "Message")
+        self._message_label = self._find_child(QLabel, "MessageLabel")
         self._level_box.clear()
         for level in LogLevel:
             self._level_box.addItem(level.label, int(level))
@@ -150,101 +158,38 @@ class PrintMessageNodeWidget(LeafNodeWidget):
         tree.Log(level, self.message_text(tree))
         return True
 
-    # ------------------------------------------------------------------ blackboard
-    def _on_added_to_tree(self) -> None:
-        tree = self._tree
-        store = tree.blackboardStore() if tree is not None else None
-        if store is not None and store is not self._store:
-            self._store = store
-            store.entryAdded.connect(self._on_entries_changed)
-            store.entryRemoved.connect(self._on_entries_changed)
-            store.entryRetyped.connect(self._on_entries_changed)
-            store.entriesReordered.connect(self._on_entries_changed)
-            store.entryRenamed.connect(self._on_entry_renamed)
-        self._refresh_editors()
-
-    def _entry_types(self) -> dict[str, str]:
-        store = self._store
-        if store is None or not shiboken6.isValid(store):
-            return {}
-        return store.types()
-
-    def _on_entries_changed(self, *_args) -> None:
-        self._refresh_editors()
-
-    def _on_entry_renamed(self, old: str, new: str) -> None:
-        """Follow a renamed entry."""
-        with self._lock:
-            renamed = self._fields.get(self.SOURCE_FIELD) == old
-            if renamed:
-                self._fields[self.SOURCE_FIELD] = new
-        if renamed:
-            runtime = self._is_runtime_change()
-            self.fieldChanged.emit(self.SOURCE_FIELD)
-            self.changed.emit(runtime)
-        self._refresh_editors()
-
     # ------------------------------------------------------------------ editors
-    def _refresh_all_fields(self) -> None:
-        self._refresh_editors()
-
-    def _refresh_field_editor(self, key: str) -> None:
-        self._refresh_editors()
-
     def _refresh_editors(self) -> None:
         """Show the node's choices and the blackboard's current entries in the editors."""
-        if "_level_box" not in self.__dict__ or not shiboken6.isValid(self._level_box):
-            return
+        level_box, source_box, edit = self._level_box, self._source_box, self._message_edit
+        if level_box is None or source_box is None or edit is None or not shiboken6.isValid(level_box):
+            return  # still being built, or being destroyed
         level = self.GetLevel()
         source = self.GetSource()
-        message = self.GetMessage()
-        blocked = self._level_box.blockSignals(True)
-        try:
-            self._level_box.setCurrentIndex(max(0, self._level_box.findData(int(level))))
-        finally:
-            self._level_box.blockSignals(blocked)
-
-        types = self._entry_types()
-        items = [(LITERAL, None, "Print the Message", False)]
-        items += [(entry, entry, f"{kind} entry: print its value", False) for entry, kind in types.items()]
-        if source is not None and source not in types:
-            items.append((f"{source} (missing)", source, f"The blackboard has no entry named {source!r}", True))
-        self._fill_source(items, source)
-
-        edit = self._message_edit
-        if edit.text() != message:
-            blocked = edit.blockSignals(True)
-            try:
-                edit.setText(message)
-                if not edit.hasFocus():
-                    edit.setCursorPosition(0)
-            finally:
-                edit.blockSignals(blocked)
+        index = max(0, level_box.findData(int(level)))
+        if level_box.currentIndex() != index:
+            with QSignalBlocker(level_box):
+                level_box.setCurrentIndex(index)
+        source_box.set_items(self._source_items(self._entry_types(), source), source)
+        set_text_quietly(edit, self.GetMessage())
         use_literal = source is None
+        hidden = edit.isHidden()
         edit.setVisible(use_literal)
         if self._message_label is not None:
             self._message_label.setVisible(use_literal)
-        self._notify_geometry()
+        if not self._laid_out or edit.isHidden() != hidden:
+            # Only this changes the size of the node: the combo boxes have a fixed width.
+            self._laid_out = True
+            self._notify_geometry()
 
-    def _fill_source(self, items: list[tuple[str, Any, str, bool]], current: str | None) -> None:
-        box = self._source_box
-        blocked = box.blockSignals(True)
-        try:
-            shown = [(box.itemText(index), box.itemData(index)) for index in range(box.count())]
-            if shown != [(text, data) for text, data, _, _ in items]:
-                box.clear()
-                for index, (text, data, tooltip, problem) in enumerate(items):
-                    box.addItem(text, data)
-                    box.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
-                    if problem:
-                        box.setItemData(index, QBrush(PROBLEM_COLOR), Qt.ItemDataRole.ForegroundRole)
-            index = 0 if current is None else next((i for i, item in enumerate(items) if item[1] == current), 0)
-            box.setCurrentIndex(index)
-        finally:
-            box.blockSignals(blocked)
-        problem = items[index][3]
-        _show_problem(box, problem)
-        box.setToolTip(items[index][2] if problem else self._source_tooltip)
+    @staticmethod
+    def _source_items(types: dict[str, str], source: str | None) -> list[ComboItem]:
+        """Rows of the Source box: Literal, every entry, and the chosen one marked missing if it does not exist."""
+        items = [ComboItem(LITERAL, None, "Print the Message")]
+        items += [ComboItem(entry, entry, f"{kind} entry: print its value") for entry, kind in types.items()]
+        if source is not None and source not in types:
+            items.append(ComboItem(f"{source} (missing)", source, f"The blackboard has no entry named {source!r}", True))
+        return items
 
     # ------------------------------------------------------------------ user edits
     def _on_level_chosen(self, index: int) -> None:
