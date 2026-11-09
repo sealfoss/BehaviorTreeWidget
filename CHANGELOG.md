@@ -8,26 +8,31 @@ and writes the same files as 0.8.0. It implements the proposals of
 
 ### Performance
 
-Measured on Windows with offscreen rendering; the stress cases use 500 nodes to show how costs
-grow.
+Measured on Windows with offscreen rendering, with the same scripts before and after (see the
+appendix of [improvements.md](improvements.md)); the stress cases use 500 nodes to show how
+costs grow. The 0.9.0 column was measured while other test runs shared the machine, so it is an
+upper bound. Rows marked * were measured by the change's own benchmark instead.
 
 | Measurement | 0.8.0 | 0.9.0 |
 |---|---|---|
-| Repaint after one node's status changes, 500 nodes | 217 ms | 3.6 ms |
-| Finding what lies under the mouse, 500 lines fanning out of one parent | 12.2 ms | 0.59 ms |
-| Finding what lies under the mouse, empty canvas, same tree | 4.45 ms | 0.042 ms |
-| `GetChildren()` of a node with 500 children | 0.84 ms | 0.003 ms |
-| Moving one of 500 siblings (per mouse move) | 0.95 ms | 0.048 ms |
-| Loading 100 Evaluation nodes and 50 blackboard entries | 40.7 s | 0.95 s |
-| Loading that tree again into a widget holding it | 3.3 s | 0.92 s |
-| Refreshing 40 Evaluation nodes after `AddEntry` | 40.7 ms | 2.4 ms |
-| Creating a leaf node without fields | 1.69 ms | 0.85 ms |
-| Loading a tree of 502 nodes | 1.96 s | 1.55 s |
-| 50 ticks of 500 leaves of which only one runs (log off / INFO) | 15.6 / 17.9 ms | 5.9 / 6.0 ms |
-| One run of a Sequence of 200 quick worker-thread leaves | 54.8 ms, 600 threads | 37.2 ms, 1 thread |
-| Longest tick starting 10 worker-thread leaves of 15 ms each | 157 ms | 110 ms |
-| `BlackboardStore.to_list()`: 20 integers and a 5000-item list | 1.27 ms | 0.91 ms |
-| The test suite (2850 tests in 0.8.0) | 3.5 min | about 35 s on 16 workers (`pytest -n 16`) |
+| Repaint after one node's status changes, 500 nodes | 226 ms | 3.7 ms |
+| Finding what lies under the mouse, 500 lines fanning out of one parent | 12.7 ms | 0.52 ms |
+| Finding what lies under the mouse, empty canvas, same tree | 4.5 ms | 0.04 ms |
+| `GetChildren()` of a node with 500 children | 0.89 ms | 0.003 ms |
+| Moving one of 500 siblings (per mouse move) | 0.99 ms | 0.07 ms |
+| Loading a tree of 100 Evaluation nodes and 50 blackboard entries again | 9.7 s | 0.44 s |
+| `AddEntry` while 20 Evaluation nodes exist | 14.2 ms | 1.4 ms |
+| Creating a leaf node without fields / with five fields | 1.69 / 3.30 ms | 0.71 / 1.89 ms |
+| Changing the title / a field of a node with five fields | 2.0 / 1.8 ms | 0.16 / 0.47 ms |
+| Loading / pasting 502 nodes | 1.98 / 2.47 s | 1.28 / 1.70 s |
+| 50 ticks of 500 leaves of which only one runs, log off / INFO * | 15.6 / 17.9 ms | 5.9 / 6.0 ms |
+| One run of a Sequence of 200 quick worker-thread leaves | 67 ms, 600 threads | 41 ms, 1 thread |
+| Longest tick starting 10 worker-thread leaves of 15 ms each * | 157 ms | 110 ms |
+| `BlackboardStore.to_list()`: 20 integers and a 5000-item list | 1.22 ms | 0.81 ms |
+| The test suite | 3.5 min (2850 tests) | about 30 s (3141 tests, `pytest -n 16`) |
+
+Ticks in which every one of 500 leaves runs cost the same as before (about 190 ms for 50 ticks
+with the log off): the time goes to py_trees and to the nodes themselves.
 
 * The view repaints only what changed (`SmartViewportUpdate`), and lines outside the repainted
   area are not painted.
