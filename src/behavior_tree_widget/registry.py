@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .blackboard_aware import BlackboardAwareLeaf
 from .blackboard_nodes import BlackboardValueNodeWidget, EvaluationNodeWidget, SetNodeWidget
 from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget
 from .groups import GROUP, GroupNodeWidget
@@ -140,7 +141,7 @@ def _type_name_of(cls: type) -> str:
 def _validate_leaf_class(cls: Any) -> str:
     if not isinstance(cls, type) or not issubclass(cls, LeafNodeWidget):
         raise TypeError(f"node types must be subclasses of LeafNodeWidget, not {cls!r}")
-    if cls in (LeafNodeWidget, BlackboardValueNodeWidget) or issubclass(cls, UnknownLeafNodeWidget):
+    if cls in (LeafNodeWidget, BlackboardAwareLeaf, BlackboardValueNodeWidget) or issubclass(cls, UnknownLeafNodeWidget):
         raise TypeError(f"{cls.__name__} cannot be registered; register a subclass that implements OnRun")
     name = _type_name_of(cls)
     if not isinstance(name, str) or not name:

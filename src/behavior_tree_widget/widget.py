@@ -1560,11 +1560,11 @@ class BehaviorTreeWidget(QTabWidget):
         view.set_locked(False)
         view.clear()
         self._apply_config(plan.config)
-        install_nodes(view, plan)
+        # The blackboard first: each node that lists entries then fills its editors once, when added.
         store = self._blackboard
         wanted = [name for name, _, _ in plan.blackboard]
         kept = [name for name in store.names() if name not in wanted and store.type_of(name) == "Object"]
-        with store.batch():  # the nodes that list entries refresh once, at the end
+        with store.batch():
             for name in store.names():
                 if name not in wanted and name not in kept:
                     store.remove(name)
@@ -1572,6 +1572,7 @@ class BehaviorTreeWidget(QTabWidget):
                 store.replace(name, type_name, value)
                 store.set_reset(name, name in plan.resets)
             store.reorder(wanted + kept)
+        install_nodes(view, plan)
         self._group_counter = 0  # default group names count from the groups of this tree
         view.set_zoom(plan.zoom if plan.zoom is not None else 1.0)
         self._set_view_target(plan.center)
