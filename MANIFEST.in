@@ -1,0 +1,6 @@
+# Files the README links to, so the source distribution is complete (setuptools adds README.md,
+# pyproject.toml, src/ and tests/ itself).
+include CHANGELOG.md
+recursive-include docs *.md
+include examples/*.py
+include tools/*.py
