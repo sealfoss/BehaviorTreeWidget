@@ -21,7 +21,16 @@ import py_trees
 import pytest
 import shiboken6
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QFrame, QLabel, QMainWindow, QMessageBox, QPushButton, QScrollArea, QTabWidget, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+    QWidget,
+)
 
 from behavior_tree_widget import (
     BehaviorTreeWidget,
@@ -36,8 +45,8 @@ from behavior_tree_widget import (
     UnknownLeafNodeWidget,
     register_node_type,
     registered_node_types,
+    widget as widget_module,
 )
-from behavior_tree_widget import widget as widget_module
 from behavior_tree_widget.blackboard import BlackboardView
 from behavior_tree_widget.canvas import TreeView
 from behavior_tree_widget.config import ConfigureDialog
@@ -1798,3 +1807,22 @@ def test_non_finite_positions_and_view_values_are_rejected(make_widget, tmp_path
     (leaf,) = [node for node in widget.GetNodes() if node.GetTypeName() == "Succeed"]
     assert leaf._item.pos().x() == 0.0
     assert widget.view().zoom() == 1.0
+
+
+# ============================================================================ UX details
+def test_execution_buttons_use_text_symbols(widget):
+    for name in ("Execute", "Pause", "Stop", "Reset", "Configure"):
+        text = widget.button(name).text()
+        assert text and all(ord(char) < 0x1F000 for char in text), (name, text)
+
+
+# ============================================================================ the unsaved-changes prompt
+def test_saving_from_the_unsaved_changes_prompt_reports_what_was_left_out(widget, dialogs):
+    widget.SetEntry([object()], "unsaveable")
+    widget.GetRootNode().SetMemory(False)  # an unsaved edit (blackboard changes are written at once)
+    assert widget.IsModified()
+    dialogs.question_answer = QMessageBox.StandardButton.Save
+    assert widget.ConfirmDiscardChanges()
+    assert not widget.IsModified()
+    assert dialogs.kinds()[-2:] == ["question", "warning"]
+    assert "unsaveable" in str(dialogs.shown[-1][1])

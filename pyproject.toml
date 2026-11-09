@@ -38,6 +38,9 @@ behavior_tree_widget = ["ui/*.ui", "py.typed"]
 qt_api = "pyside6"
 testpaths = ["tests"]
 timeout = 120
+# Performance tests are opt-in: pytest -m perf (without -n, so they do not compete for the CPU).
+addopts = "-m 'not perf'"
+markers = ["perf: performance test with a time limit; deselected unless -m perf is given"]
 # Internal code must never use deprecated APIs; tests that check them opt out with a filterwarnings mark.
 filterwarnings = ['error:.*is deprecated; use:DeprecationWarning']
 

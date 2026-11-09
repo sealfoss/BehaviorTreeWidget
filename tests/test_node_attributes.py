@@ -10,6 +10,24 @@ from PySide6.QtWidgets import QLineEdit, QSpinBox
 
 from behavior_tree_widget import ExecutionCancelled, LeafNodeWidget
 from behavior_tree_widget._runctx import RunToken, bound
+from behavior_tree_widget.nodes import NodeWidget
+
+from conftest import fast_config, run_until_idle
+from support.round3 import (
+    GUI_THREAD,
+    R3LateAssigner,
+    R3LiveAssigner,
+    R3Probe,
+    R3Untitled,
+    _Titled,
+    add_leaf,
+    gate,
+    read_json,
+    record,
+    save,
+    saved_node,
+)
+from support.round4 import PreTitled
 
 
 class Plain(LeafNodeWidget):
@@ -137,3 +155,94 @@ def test_switching_the_composite_type_renames_a_title_that_names_the_type(bt):
     renamed.SetCompositeType("Selector")
     assert selector.GetTitle() == "Selector" and titles == ["Selector"]
     assert renamed.GetTitle() == "Patrol" and renamed.DisplayTitle() == "Patrol (Selector)"
+
+
+# ============================================================================ _title / _fields assignment
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
+def test_title_assignment_is_coerced(qtbot, bt, tmp_path):
+    root = bt.GetRootNode()
+    leaf = bt.AddNode(R3Probe, 0, 220)
+    untitled = bt.AddNode(R3Untitled, 300, 220)
+    selector = bt.AddNode("Selector", -300, 220)
+    save(bt)
+    flags = record(leaf.changed)
+    titles = record(leaf.titleChanged)
+    for value, expected in [(42, "42"), (2.5, "2.5"), (_Titled(), "from __str__"), (None, "R3 Probe"), ("Named", "Named")]:
+        leaf._title = value
+        assert leaf.GetTitle() == expected and type(leaf.GetTitle()) is str
+        assert leaf._title == expected
+        assert leaf._title_label.text() == expected
+    assert titles == ["42", "2.5", "from __str__", "R3 Probe", "Named"]
+    assert flags == [False] * 5, "assignments on the GUI thread while idle are edits"
+    assert bt.IsModified()
+    untitled._title = None
+    assert untitled.GetTitle() == "R3Untitled"
+    selector._title = None
+    assert selector.GetTitle() == "Selector" and selector._title_label.text() == "Selector"
+    root._title = 3
+    assert root.GetTitle() == "3"
+    root._title = None
+    assert root.GetTitle() == "Root"
+    leaf._title = 1234
+    out = str(tmp_path / "titles_BT.json")
+    assert bt.SaveTree(out)
+    assert saved_node(read_json(out), leaf.GetId())["title"] == "1234"
+
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
+@pytest.mark.parametrize("interrupt", ["Stop", "Reset"])
+def test_cancelled_worker_cannot_assign_title_or_fields(qtbot, bt, gate, interrupt):
+    leaf = add_leaf(bt, R3LateAssigner)
+    state = {"entered": threading.Event(), "gate": gate, "done": threading.Event()}
+    leaf.state = state
+    fast_config(bt)
+    save(bt)
+    flags = record(leaf.changed)
+    bt.Execute()
+    assert state["entered"].wait(5)
+    getattr(bt, interrupt)()
+    gate.set()
+    assert state["done"].wait(5)
+    qtbot.wait(30)
+    outcome = state["outcome"]
+    for name in ("_title", "_title=None", "_fields"):
+        assert isinstance(outcome[name], ExecutionCancelled), f"{name}: {outcome[name]!r}"
+    assert outcome["CancelRequested"] is True
+    assert leaf.GetTitle() == "R3 Late Assigner"
+    assert leaf._title_label.text() == "R3 Late Assigner"
+    assert leaf.GetFields() == {"n": 1}
+    assert leaf.field_editor("n").value() == 1
+    assert flags == []
+    assert not bt.IsModified()
+    bt.Stop()
+
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
+def test_worker_title_assignment_is_coerced_and_applied_on_the_gui_thread(qtbot, bt, monkeypatch):
+    threads = []
+    original = NodeWidget._on_title_changed
+
+    def spy(self, *args, **kwargs):
+        threads.append(threading.get_ident())
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(NodeWidget, "_on_title_changed", spy)
+    leaf = add_leaf(bt, R3LiveAssigner)
+    fast_config(bt)
+    save(bt)
+    flags = record(leaf.changed)
+    bt.Execute()
+    run_until_idle(qtbot, bt)
+    qtbot.waitUntil(lambda: leaf._title_label.text() == "7", timeout=2000)
+    qtbot.wait(20)
+    assert leaf.GetTitle() == "7" and type(leaf.GetTitle()) is str
+    assert leaf.GetFields() == {"n": 2, "label": "set by worker"}
+    assert leaf.field_editor("label") is not None and leaf.field_editor("label").text() == "set by worker"
+    assert threads and set(threads) == {GUI_THREAD}
+    assert flags and all(flag is True for flag in flags), flags
+    assert not bt.IsModified()
+
+
+# ============================================================================ data edge cases
+def test_non_str_title_assigned_before_super_is_coerced(widget):
+    node = widget.AddNode(PreTitled, 0, 200)
+    assert node.GetTitle() == "123"
+    assert node._title_label.text() == "123"

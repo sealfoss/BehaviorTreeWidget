@@ -20,6 +20,7 @@ from behavior_tree_widget.groups import GROUP
 from behavior_tree_widget.serialization import FORMAT_NAME
 
 from conftest import fast_config, run_until_idle
+from support.round10 import Mark as R10Mark, legacy_tree
 
 
 class Mark(LeafNodeWidget):
@@ -425,3 +426,36 @@ def test_notes_only_inside_a_group_with_nodes_are_kept_as_notes(make_widget, tre
     assert other.LoadTree(str(tmp_path / "patrol_BT.json"))
     notes = [node for node in other.GetNodes() if isinstance(node, NotesNodeWidget)]
     assert [note.GetText() for note in notes] == ["kept"]
+
+
+# ============================================================================ names of files of earlier versions
+def test_a_group_cannot_take_the_name_a_legacy_tree_is_saved_to(make_widget, tmp_path):
+    legacy_tree(tmp_path / "robot.json")
+    widget = make_widget()
+    assert widget.LoadTree(str(tmp_path / "robot.json"))
+    widget.AddNode("Succeed", 0, 600)
+    group = widget.AddNode("Group", -100, 520)
+    group.SetGroupSize(500, 300)
+    group.SetTitle("robot")
+    QApplication.processEvents()
+    with pytest.raises(ValueError, match="names the file of this tree"):
+        widget.PromoteGroupToSubTree(group)
+    assert not os.path.exists(tmp_path / "robot_BT.json")
+
+
+# ============================================================================ Promote to Sub-Tree
+def test_promote_refuses_a_group_with_an_outside_sibling_between_its_nodes(bt):
+    bt.RegisterNodeType(R10Mark)
+    nodes = {}
+    for title, x, y in (("A", -400, 300), ("X", 0, 700), ("B", 400, 300)):
+        nodes[title] = bt.AddNode("Mark", x, y)
+        nodes[title].SetTitle(title)
+        bt.Connect(bt.GetRootNode(), nodes[title])
+    group = bt.AddNode("Group", -450, 250)
+    group.SetGroupSize(1100, 250)
+    QApplication.processEvents()
+    assert set(group.GetContainedNodes()) == {nodes["A"], nodes["B"]}
+    with pytest.raises(ValueError, match="'X' outside the group runs between"):
+        bt.PromoteGroupToSubTree(group)
+    assert bt.GetRootNode().GetChildren() == [nodes["A"], nodes["X"], nodes["B"]]
+    assert group in bt.GetNodes()

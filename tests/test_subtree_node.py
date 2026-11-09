@@ -23,6 +23,7 @@ from behavior_tree_widget.serialization import BLACKBOARD_FORMAT_NAME, FORMAT_NA
 from behavior_tree_widget.subtree import SUB_TREE
 
 from conftest import SlowCancelable, fast_config, run_until_idle
+from support.round10 import Stubborn
 
 
 class Mark(LeafNodeWidget):
@@ -420,3 +421,28 @@ def test_set_file_from_a_worker_thread(qtbot, bt):
     thread.join(5)
     qtbot.waitUntil(lambda: node.file_editor().text() == "from_thread_BT.json", timeout=2000)
     QApplication.processEvents()
+
+
+# ============================================================================ sub-tree nodes on worker threads
+def test_a_sub_tree_node_never_runs_two_calls_at_once(qtbot, make_widget, bt, tmp_path):
+    Stubborn.active = Stubborn.most = 0
+    Stubborn.touched, Stubborn.errors = [], []
+    author = make_widget(node_types=[Stubborn])
+    assert author.NewTree(str(tmp_path / "sub"))
+    author.Connect(author.GetRootNode(), author.AddNode(Stubborn, 0, 200))
+    assert author.SaveTree(author.GetFilePath())
+    bt.RegisterNodeType(Stubborn)
+    fast_config(bt)
+    sub = bt.AddNode("Sub-Tree", 0, 200)
+    sub.SetFile("sub_BT.json")
+    bt.Connect(bt.GetRootNode(), sub)
+    bt.Execute()
+    qtbot.waitUntil(lambda: Stubborn.active == 1, timeout=3000)
+    first = bt.executor().subtree_nodes()
+    bt.Stop()
+    bt.Execute()  # the new run's node waits for the interrupted call
+    qtbot.waitUntil(lambda: not bt.IsExecuting(), timeout=5000)
+    assert Stubborn.most == 1
+    # The released nodes lived until their call returned (the call could use them), then went away.
+    assert Stubborn.touched == [True, True] and Stubborn.errors == []
+    qtbot.waitUntil(lambda: not any(shiboken6.isValid(node) for node in first), timeout=3000)
