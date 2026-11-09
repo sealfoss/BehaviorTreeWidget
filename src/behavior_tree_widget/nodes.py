@@ -1,15 +1,18 @@
 """Node widgets shown in the behavior tree view.
 
-Four kinds of nodes exist:
+The nodes of the behavior tree:
 
 * :class:`RootNodeWidget` - the single root of a tree, a Sequence or a Selector
   without a parent.
 * :class:`CompositeNodeWidget` - a Sequence or Selector with a parent and children.
 * :class:`NegationNodeWidget` - a parent of exactly one child whose result it inverts.
-* :class:`LeafNodeWidget` - the base class for user defined nodes. Subclasses
-  override :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
+* :class:`LeafNodeWidget` - the base class of leaf nodes: the built-in ones (in
+  :mod:`.blackboard_nodes`, :mod:`.control_nodes`, :mod:`.network_nodes`, :mod:`.print_node`
+  and :mod:`.subtree`) and the application's own, which override
+  :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
 
-(The Notes node, which documents the tree and is not part of it, is in :mod:`.notes`.)
+Notes and Groups (:mod:`.notes`, :mod:`.groups`, both :class:`~.notes.BoxNodeWidget`) are
+nodes of the view that are not part of the tree: they have no connections and never run.
 
 Example::
 
