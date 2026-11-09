@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pytest-qt>=4.2", "pytest-timeout>=2"]
+test = ["pytest>=7", "pytest-qt>=4.2", "pytest-timeout>=2", "pytest-xdist>=3"]
 
 [project.gui-scripts]
 behavior-tree-widget-demo = "behavior_tree_widget.demo:main"

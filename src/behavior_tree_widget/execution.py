@@ -51,6 +51,7 @@ import shiboken6
 from py_trees.common import Status
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
+from ._common import file_key
 from ._runctx import RunToken, bound, check_not_cancelled, current_token
 from .nodes import SEQUENCE, CompositeNodeWidget, LeafNodeWidget, NegationNodeWidget, NodeStatus, NodeWidget
 from .serialization import TreeFileError
@@ -366,11 +367,6 @@ class _ExecutionLog(py_trees.visitors.VisitorBase):
 #: Hidden sub-tree nodes whose widget was destroyed while their OnRun call still ran (kept, see
 #: TreeExecutor._on_subtree_call_done).
 _orphaned_nodes: list = []
-
-
-def _file_key(path: str) -> str:
-    """Identifies a file however its path is written (to detect a sub-tree containing itself)."""
-    return os.path.normcase(os.path.realpath(path))
 
 
 class TreeExecutor(QObject):
@@ -796,7 +792,7 @@ class TreeExecutor(QObject):
                 path = node.GetResolvedFile()
                 if path is None:
                     raise TreeFileError("no sub-tree file is chosen (File)")
-                key = _file_key(path)
+                key = file_key(path)
                 if key in chain:
                     raise TreeFileError(
                         f"'{os.path.basename(path)}' contains this Sub-Tree node itself "
@@ -824,7 +820,7 @@ class TreeExecutor(QObject):
 
         main_path = owner.GetFilePath()
         try:
-            tree = py_trees.trees.BehaviourTree(root=build(root, (_file_key(main_path),) if main_path else (), None))
+            tree = py_trees.trees.BehaviourTree(root=build(root, (file_key(main_path),) if main_path else (), None))
         except BaseException:
             self._subtree_nodes = subtree_nodes
             self._release_subtree_nodes()

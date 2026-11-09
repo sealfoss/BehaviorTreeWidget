@@ -37,7 +37,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ._common import INT_MAX, INT_MIN
 from ._runctx import check_not_cancelled, current_token
 from ._ui import load_ui
 
@@ -86,10 +87,6 @@ SEQUENCE = "Sequence"
 SELECTOR = "Selector"
 COMPOSITE_TYPES = (SEQUENCE, SELECTOR)
 NEGATION = "Negation"
-
-INT_MIN = -(2**31)
-INT_MAX = 2**31 - 1
-
 
 class NodeStatus(str, Enum):
     """Execution state displayed by a node's Status label."""
@@ -577,6 +574,28 @@ class NodeWidget(QWidget):
         if self._canvas is None:
             raise RuntimeError("the node has not been added to a BehaviorTreeWidget")
         return self._canvas
+
+    def _link(self, child: NodeWidget) -> None:
+        """Make ``child`` the last child of this node (GUI thread; the caller checked that the
+        connection is allowed and that ``child`` has no parent)."""
+        with self._lock:
+            self._children.append(child)
+        with child._lock:
+            child._parent = self
+
+    def _unlink(self, child: NodeWidget) -> None:
+        """Remove ``child`` from the children of this node (GUI thread)."""
+        with self._lock:
+            if child in self._children:
+                self._children.remove(child)
+        with child._lock:
+            if child._parent is self:
+                child._parent = None
+
+    def scene_rect(self) -> QRectF | None:
+        """The node's rectangle in scene coordinates (None while it is not in a view)."""
+        item = self._item
+        return item.sceneBoundingRect() if item is not None else None
 
     def GetTree(self) -> BehaviorTreeWidget | None:
         """The BehaviorTreeWidget this node belongs to."""

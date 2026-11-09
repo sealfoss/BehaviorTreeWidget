@@ -31,8 +31,9 @@ import reprlib
 import sys
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 import py_trees
 import shiboken6
@@ -59,14 +60,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ._common import INT_MAX, INT_MIN
 from ._runctx import check_not_cancelled
 from ._ui import load_ui
 from .serialization import decode_value, encode_value
 
 log = logging.getLogger("behavior_tree_widget")
 
-INT_MIN = -(2**31)
-INT_MAX = 2**31 - 1
 FLOAT_DECIMALS = 8
 DISPLAY_LIMIT = 500
 
@@ -558,6 +558,7 @@ class BlackboardStore(QObject):
     entriesReordered = Signal()
     entryResetChanged = Signal(str)  # the Reset flag of an entry was switched (see set_reset)
     changed = Signal(bool)  # any change of a value, name, type or the order; True for run-time changes
+    batchFinished = Signal()  # the outermost batch() ended (see batch)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -570,6 +571,9 @@ class BlackboardStore(QObject):
         self._loop_capture: dict[str, tuple[str, Any] | None] | None = None
         self._disposed = False
         self._runtime_active = False
+        self._revision = 0  # counts every change (see revision)
+        self._saved_revision = 0  # counts the changes that can alter what to_list() returns
+        self._batch_depth = 0  # nesting of batch()
         self._gui_thread = threading.get_ident()
         self._namespace = f"/behavior_tree_widget_{uuid.uuid4().hex[:12]}"
         self._client = py_trees.blackboard.Client(name="BehaviorTreeWidget", namespace=self._namespace)
@@ -619,6 +623,46 @@ class BlackboardStore(QObject):
 
     def is_disposed(self) -> bool:
         return self._disposed
+
+    # ------------------------------------------------------------------ change tracking
+    def revision(self, saved: bool = False) -> int:
+        """A number that grows with every change of the blackboard (thread-safe).
+
+        With ``saved``, only the changes that can alter what :meth:`to_list` returns (what the
+        blackboard file holds) count; changes of Object entries, which are never saved, do not.
+        """
+        with self._lock:
+            return self._saved_revision if saved else self._revision
+
+    def _bump_locked(self, saved: bool) -> None:
+        """Count a change (the caller holds the lock); ``saved``: it can alter :meth:`to_list`."""
+        self._revision += 1
+        if saved:
+            self._saved_revision += 1
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Group several changes, e.g. while a whole blackboard is replaced.
+
+        Every change still emits its own signals. Listeners that redraw when entries are added,
+        removed, renamed, retyped or reordered can check :meth:`in_batch` and redraw once when
+        :attr:`batchFinished` is emitted, at the end of the outermost batch. Batches nest.
+        """
+        with self._lock:
+            self._batch_depth += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._batch_depth -= 1
+                finished = self._batch_depth == 0
+            if finished and shiboken6.isValid(self):
+                self.batchFinished.emit()
+
+    def in_batch(self) -> bool:
+        """True while :meth:`batch` is in progress (see there)."""
+        with self._lock:
+            return self._batch_depth > 0
 
     # ------------------------------------------------------------------ names
     @staticmethod
@@ -687,6 +731,7 @@ class BlackboardStore(QObject):
                 self._reset.add(name)
             else:
                 self._reset.discard(name)
+            self._bump_locked(self._types[name] != "Object")
         self.entryResetChanged.emit(name)
 
     # ------------------------------------------------------------------ execution loops
@@ -769,6 +814,7 @@ class BlackboardStore(QObject):
                 self._reset.add(name)
             else:
                 self._reset.discard(name)
+            self._bump_locked(type_name != "Object")
         self.entryAdded.emit(name)
         self._notify(runtime)
 
@@ -793,6 +839,7 @@ class BlackboardStore(QObject):
             value = coerce_value(type_name, value)
             self._capture_locked(name)
             self._client.set(self.key(name), value, overwrite=True)
+            self._bump_locked(type_name != "Object")
         self.entryChanged.emit(name)
         self._notify(runtime)
 
@@ -810,6 +857,7 @@ class BlackboardStore(QObject):
             self._capture_locked(name)
             self._client.set(self.key(name), value, overwrite=True)
             self._types[name] = type_name
+            self._bump_locked(old_type != "Object" or type_name != "Object")
         if old_type == type_name:
             self.entryChanged.emit(name)
         else:
@@ -820,8 +868,9 @@ class BlackboardStore(QObject):
         runtime = self._is_runtime()
         with self._lock:
             self._check_writable("RemoveEntry")
-            self.type_of(name)
+            type_name = self.type_of(name)
             del self._types[name]
+            self._bump_locked(type_name != "Object")
             self._reset.discard(name)
             if self._loop_capture is not None:
                 self._loop_capture.pop(name, None)  # a removed entry is not brought back
@@ -848,12 +897,14 @@ class BlackboardStore(QObject):
                 self._reset.add(new)
             if self._loop_capture is not None and old in self._loop_capture:
                 self._loop_capture[new] = self._loop_capture.pop(old)
+            self._bump_locked(self._types[new] != "Object")
         self.entryRenamed.emit(old, new)
         self._notify(runtime)
 
     def clear(self) -> None:
-        for name in self.names():
-            self.remove(name)
+        with self.batch():
+            for name in self.names():
+                self.remove(name)
 
     def move(self, name: str, offset: int) -> int:
         """Move entry ``name`` ``offset`` places down the list (up when negative), stopping at
@@ -874,6 +925,7 @@ class BlackboardStore(QObject):
                 return index
             names.insert(target, names.pop(index))
             self._types = {entry: self._types[entry] for entry in names}
+            self._bump_locked(self._types[name] != "Object")
         self.entriesReordered.emit()
         self._notify(runtime)  # an edit like a value change (or a run-time change from a running tree)
         return target
@@ -886,6 +938,7 @@ class BlackboardStore(QObject):
             changed = ordered != list(self._types)
             if changed:
                 self._types = {name: self._types[name] for name in ordered}
+                self._bump_locked(True)
         if changed:
             self.entriesReordered.emit()
 
@@ -910,7 +963,7 @@ class BlackboardStore(QObject):
 
     def restore(self, snapshot: list[tuple[str, str, Any]]) -> None:
         """Make the blackboard contain exactly the entries of ``snapshot`` (in its order)."""
-        with self._lock:
+        with self.batch(), self._lock:
             if self._disposed:
                 return
             wanted = [name for name, _, _ in snapshot]
@@ -1010,20 +1063,21 @@ class BlackboardStore(QObject):
         except Object entries (run-time objects set from code, which are never saved).
         """
         entries, reset, problems = self.parse_items(items)
-        if replace:
-            wanted = {name for name, _, _ in entries}
-            for name in self.names():
-                if name not in wanted and self.type_of(name) != "Object":
-                    self.remove(name)
-        for name, type_name, value in entries:
-            try:
-                if self.has(name):
-                    self.replace(name, type_name, value)
-                else:
-                    self.add(name, type_name, value)
-                self.set_reset(name, name in reset)
-            except (TypeError, ValueError, KeyError) as error:
-                problems.append(f"blackboard entry {name!r}: {error}")
+        with self.batch():
+            if replace:
+                wanted = {name for name, _, _ in entries}
+                for name in self.names():
+                    if name not in wanted and self.type_of(name) != "Object":
+                        self.remove(name)
+            for name, type_name, value in entries:
+                try:
+                    if self.has(name):
+                        self.replace(name, type_name, value)
+                    else:
+                        self.add(name, type_name, value)
+                    self.set_reset(name, name in reset)
+                except (TypeError, ValueError, KeyError) as error:
+                    problems.append(f"blackboard entry {name!r}: {error}")
         return problems
 
     def dispose(self, notify: bool = True) -> None:
@@ -1038,6 +1092,7 @@ class BlackboardStore(QObject):
             self._disposed = True
             names = list(self._types)
             self._types.clear()
+            self._bump_locked(True)
             self._reset.clear()
             self._loop_capture = None
             try:
@@ -1045,8 +1100,9 @@ class BlackboardStore(QObject):
             except Exception:  # noqa: BLE001 - e.g. Blackboard.clear() was called globally
                 log.debug("could not unregister blackboard client", exc_info=True)
         if notify and shiboken6.isValid(self):
-            for name in names:
-                self.entryRemoved.emit(name)
+            with self.batch():
+                for name in names:
+                    self.entryRemoved.emit(name)
 
 
 # ====================================================================== widgets

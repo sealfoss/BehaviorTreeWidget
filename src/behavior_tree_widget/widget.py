@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ._common import TREE_FILE_FILTER, file_key
 from ._ui import load_ui
 from .blackboard import BlackboardStore, BlackboardView
 from .blackboard_nodes import BlackboardValueNodeWidget, EvaluationNodeWidget, SetNodeWidget
@@ -322,7 +323,7 @@ class BehaviorTreeWidget(QTabWidget):
 
     TREE_TAB_TITLE = "Behavior Tree"
     BLACKBOARD_TAB_TITLE = "Blackboard"
-    FILE_FILTER = "Behavior Tree (*_BT.json);;JSON Files (*.json);;All Files (*)"
+    FILE_FILTER = TREE_FILE_FILTER
     WINDOW_TITLE_FORMAT = "Behavior Tree - {filename}"
     #: Blackboard changes are written to the tree file at most this often (ms); changes made in
     #: between are written together at the end of the interval.
@@ -357,6 +358,8 @@ class BehaviorTreeWidget(QTabWidget):
         # the nodes, connections and options and changes on Save only.
         self._blackboard_path: str | None = None
         self._blackboard_written: list | None = None
+        # BlackboardStore.revision(saved=True) when _blackboard_written was taken (None: unknown).
+        self._blackboard_written_revision: int | None = None
         self._group_counter = 0  # number of the last default group name given (group_001, ...)
         self._blackboard_save_pending = False
         self._blackboard_save_error: str | None = None
@@ -1013,8 +1016,8 @@ class BehaviorTreeWidget(QTabWidget):
         blackboard file; with ``report_problems`` the user is told what was left out."""
         path = tree_file_paths(path)[0]
         blackboard_path = blackboard_path_for(path)
-        shown = {self._file_key(level.path) for level in self._levels}
-        if shown & {self._file_key(path), self._file_key(blackboard_path)}:
+        shown = {file_key(level.path) for level in self._levels}
+        if shown & {file_key(path), file_key(blackboard_path)}:
             raise ValueError(
                 f"'{os.path.basename(path)}' is the file of a sub-tree shown with Zoom In; "
                 "go back first or choose another name"
@@ -1313,6 +1316,9 @@ class BehaviorTreeWidget(QTabWidget):
         blackboard write: logged, ``blackboardSaveFailed``, and the tree counts as modified).
         Without ``force`` nothing is written when the file already holds the blackboard."""
         path = self._blackboard_path
+        revision = self._blackboard.revision(saved=True)  # read first: later changes are written next time
+        if not force and revision == self._blackboard_written_revision and self._blackboard_save_error is None:
+            return True  # nothing the file holds changed (e.g. only Object entries changed)
         problems: list[str] = []
         blackboard = self._blackboard.to_list(problems, quiet=True)
         for problem in problems:  # e.g. a value of a type that cannot be written as JSON
@@ -1320,7 +1326,8 @@ class BehaviorTreeWidget(QTabWidget):
                 self._blackboard_skipped.add(problem)
                 log.warning("%s", problem)
         if not force and blackboard == self._blackboard_written and self._blackboard_save_error is None:
-            return True  # e.g. only Object entries (never saved) changed
+            self._blackboard_written_revision = revision
+            return True  # e.g. a value was changed and changed back
         self._last_blackboard_save = time.monotonic()
         try:
             write_json_atomic(path, blackboard_document(blackboard))
@@ -1334,6 +1341,7 @@ class BehaviorTreeWidget(QTabWidget):
             self.blackboardSaveFailed.emit(message)
             return False
         self._blackboard_written = blackboard
+        self._blackboard_written_revision = revision
         if self._blackboard_save_error is not None:
             log.info("the blackboard was written to '%s' again", path)
             self._log(LogLevel.INFO, f"The blackboard was written to '{path}' again")
@@ -1753,7 +1761,7 @@ class BehaviorTreeWidget(QTabWidget):
         key = os.path.normcase(os.path.realpath(path))
         # The tree's own file (also the one a file of an earlier version, robot.json, is saved to)
         # and the files of the sub-trees shown with Zoom In.
-        own = {self._file_key(p) for p in self._open_paths()}
+        own = {file_key(p) for p in self._open_paths()}
         if key in own:
             raise ValueError(
                 f"the group name {name!r} names the file of this tree or of a tree containing it; rename the group"
@@ -2025,10 +2033,6 @@ class BehaviorTreeWidget(QTabWidget):
         """The file of the tree shown."""
         return self._levels[-1].path if self._levels else self._file_path
 
-    @staticmethod
-    def _file_key(path: str) -> str:
-        return os.path.normcase(os.path.realpath(path))
-
     def _open_paths(self) -> list[str]:
         """The files of the tree (also the one a file of an earlier version is saved to) and of
         the sub-trees shown."""
@@ -2039,8 +2043,8 @@ class BehaviorTreeWidget(QTabWidget):
         """The zoom level showing the tree file ``path``, if any."""
         if not self._levels:
             return None
-        key = self._file_key(path)
-        return next((level for level in self._levels if self._file_key(level.path) == key), None)
+        key = file_key(path)
+        return next((level for level in self._levels if file_key(level.path) == key), None)
 
     def _shown_twins(self) -> dict[tuple[tuple[str, ...], str], NodeWidget]:
         """``{(scope, node id): node}`` of the nodes of the sub-trees shown: the executor shows the
@@ -2063,7 +2067,7 @@ class BehaviorTreeWidget(QTabWidget):
             if not os.path.isfile(path):
                 write_json_atomic(path, self._new_tree_data())
                 self._log(LogLevel.INFO, f"New sub-tree created: '{path}'")
-        if self._file_key(path) in {self._file_key(open_path) for open_path in self._open_paths()}:
+        if file_key(path) in {file_key(open_path) for open_path in self._open_paths()}:
             raise ValueError(
                 f"'{os.path.basename(path)}' is the file of this tree or of a tree containing it; "
                 "a sub-tree cannot contain itself"
@@ -2378,13 +2382,14 @@ class BehaviorTreeWidget(QTabWidget):
         store = self._blackboard
         wanted = [name for name, _, _ in plan.blackboard]
         kept = [name for name in store.names() if name not in wanted and store.type_of(name) == "Object"]
-        for name in store.names():
-            if name not in wanted and name not in kept:
-                store.remove(name)
-        for name, type_name, value in plan.blackboard:
-            store.replace(name, type_name, value)
-            store.set_reset(name, name in plan.resets)
-        store.reorder(wanted + kept)
+        with store.batch():  # the nodes that list entries refresh once, at the end
+            for name in store.names():
+                if name not in wanted and name not in kept:
+                    store.remove(name)
+            for name, type_name, value in plan.blackboard:
+                store.replace(name, type_name, value)
+                store.set_reset(name, name in plan.resets)
+            store.reorder(wanted + kept)
         self._group_counter = 0  # default group names count from the groups of this tree
         view.set_zoom(plan.zoom if plan.zoom is not None else 1.0)
         self._set_view_target(plan.center)
@@ -2508,9 +2513,9 @@ class BehaviorTreeWidget(QTabWidget):
         self._blackboard_path = plan.blackboard_path
         # What the blackboard file holds: the entries just read, so an unchanged blackboard is not
         # written. (For a file without blackboard file, the first change creates it.)
-        self._blackboard_written = (
-            self._blackboard.to_list(quiet=True) if plan.blackboard_path and os.path.exists(plan.blackboard_path) else None
-        )
+        file_exists = bool(plan.blackboard_path) and os.path.exists(plan.blackboard_path)
+        self._blackboard_written_revision = self._blackboard.revision(saved=True) if file_exists else None
+        self._blackboard_written = self._blackboard.to_list(quiet=True) if file_exists else None
         self._blackboard_save_pending = False  # the blackboard is the file's
         self._blackboard_timer.stop()
         self._blackboard_save_error = None

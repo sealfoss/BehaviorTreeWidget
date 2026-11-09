@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QFileDialog, QLineEdit, QToolButton, QWidget
 
+from ._common import TREE_FILE_FILTER
 from ._runctx import check_not_cancelled
 from .nodes import LeafNodeWidget
 from .serialization import tree_file_paths
@@ -52,7 +53,7 @@ class SubTreeNodeWidget(LeafNodeWidget):
     FILE_FIELD = "File"
     _fields = {FILE_FIELD: ""}
     RUN_IN_THREAD = False
-    FILE_FILTER = "Behavior Tree (*_BT.json);;JSON Files (*.json);;All Files (*)"
+    FILE_FILTER = TREE_FILE_FILTER
 
     def __init__(self, parent: QWidget | None = None):
         # Folder that a relative file name is relative to, for Sub-Tree nodes inside a sub-tree
