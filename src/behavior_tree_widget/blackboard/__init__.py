@@ -32,13 +32,6 @@ from .float_spinbox import _DBL_MAX as _DBL_MAX
 from .float_spinbox import FloatSpinBox
 from .float_spinbox import _parse_float_text as _parse_float_text
 from .store import BlackboardStore
-from .values import _bounded_repr as _bounded_repr
-from .values import _copy_value as _copy_value
-from .values import _deepcopy_container as _deepcopy_container
-from .values import _equal_values as _equal_values
-from .values import _NonFiniteNames as _NonFiniteNames
-from .values import _same_value as _same_value
-from .values import _shorten as _shorten
 from .values import (
     DISPLAY_LIMIT,
     ENTRY_TYPES,
@@ -55,6 +48,13 @@ from .values import (
     safe_repr,
     safe_str,
 )
+from .values import _bounded_repr as _bounded_repr
+from .values import _copy_value as _copy_value
+from .values import _deepcopy_container as _deepcopy_container
+from .values import _equal_values as _equal_values
+from .values import _NonFiniteNames as _NonFiniteNames
+from .values import _same_value as _same_value
+from .values import _shorten as _shorten
 from .view import (
     FLOAT_DECIMALS,
     MOVE_DOWN_TOOLTIP,

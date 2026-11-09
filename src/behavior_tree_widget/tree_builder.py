@@ -53,7 +53,7 @@ class TreeBuilder:
     them when it no longer needs the tree, also when :meth:`build` raised.
     """
 
-    def __init__(self, executor: "LeafExecutor", host: "ExecutionHost", subtree_calls: dict[Place, Future]):
+    def __init__(self, executor: LeafExecutor, host: ExecutionHost, subtree_calls: dict[Place, Future]):
         """``subtree_calls``: interrupted ``OnRun`` calls of released hidden nodes that are still
         running, by place; the node built for the same place waits for its call."""
         self._executor = executor

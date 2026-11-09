@@ -7,8 +7,9 @@ options and unsaved-changes state) plus the Sub-Tree node it was zoomed into fro
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 from ._common import file_key
 from .document import TreeDocument

@@ -45,7 +45,7 @@ from typing import Any
 
 from PySide6.QtCore import QMetaMethod, QObject, Qt, Signal
 
-__all__ = ["LogLevel", "TreeLogger", "flush_logs", "log_file_name", "APP_START", "START_FOLDER"]
+__all__ = ["APP_START", "START_FOLDER", "LogLevel", "TreeLogger", "flush_logs", "log_file_name"]
 
 _log = logging.getLogger("behavior_tree_widget")
 
@@ -65,7 +65,7 @@ class LogLevel(enum.IntEnum):
         return f"{self.value}: {'None' if self is LogLevel.NONE else self.name}"
 
     @classmethod
-    def coerce(cls, value: Any) -> "LogLevel":
+    def coerce(cls, value: Any) -> LogLevel:
         """A LogLevel from a LogLevel, its number (0 - 4) or its name (``"debug"``).
 
         Raises:

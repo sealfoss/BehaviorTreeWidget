@@ -16,7 +16,8 @@ import logging
 import os
 import threading
 import warnings
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QPointF, QSignalBlocker, Qt, QTimer, Signal
@@ -53,7 +54,6 @@ from .registry import (
     YIELDING_TYPE_NAMES,
     NodeTypeRegistry,
     _global_node_types,
-    _register,
     register_node_type,
     registered_node_types,
 )
@@ -118,7 +118,7 @@ def _cleanup_after_destroy(store: BlackboardStore, executor: TreeExecutor, log_c
     executor.abandon()  # no more node code runs; running OnRun calls are cancelled
     try:
         store.dispose(notify=False)  # the Blackboard tab is being destroyed as well
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.debug("blackboard cleanup failed", exc_info=True)
 
 
@@ -377,9 +377,13 @@ class BehaviorTreeWidget(QTabWidget):
             elif isinstance(node, RootNodeWidget):
                 raise ValueError("a tree can only have one root node")
             elif isinstance(node, NotesNodeWidget) and not self._registry.offers(NOTES):
-                raise ValueError(f"{NOTES!r} is the name of a registered leaf type in this widget; notes are not available")
+                raise ValueError(
+                    f"{NOTES!r} is the name of a registered leaf type in this widget; notes are not available"
+                )
             elif isinstance(node, GroupNodeWidget) and not self._registry.offers(GROUP):
-                raise ValueError(f"{GROUP!r} is the name of a registered leaf type in this widget; groups are not available")
+                raise ValueError(
+                    f"{GROUP!r} is the name of a registered leaf type in this widget; groups are not available"
+                )
         elif isinstance(node_type, type):
             self._registry.register(node_type)
             node = node_type()
@@ -695,7 +699,8 @@ class BehaviorTreeWidget(QTabWidget):
         if interactive:
             if not self.ConfirmDiscardChanges():
                 return False
-            path = self._ask_save_path("New Behavior Tree", self._suggested_path(f"behavior_tree{TREE_FILE_SUFFIX}.json"))
+            suggestion = self._suggested_path(f"behavior_tree{TREE_FILE_SUFFIX}.json")
+            path = self._ask_save_path("New Behavior Tree", suggestion)
             if not path:
                 return False
         tree_path, blackboard_path = tree_file_paths(os.path.abspath(path))
@@ -893,7 +898,8 @@ class BehaviorTreeWidget(QTabWidget):
                     self._save_tree(current, report_problems=True)
                     return True
                 except SAVE_ERRORS as error:
-                    QMessageBox.critical(self, "Save Behavior Tree", f"Could not save '{self._document.path}':\n{error}")
+                    message = f"Could not save '{self._document.path}':\n{error}"
+                    QMessageBox.critical(self, "Save Behavior Tree", message)
                     return False
             return self.SaveTree()
         return answer == QMessageBox.StandardButton.Discard
@@ -948,23 +954,23 @@ class BehaviorTreeWidget(QTabWidget):
         return self._loop_box
 
     # Names of the accessors before 0.9.0 (deprecated).
-    def mainView(self) -> TreeView:  # noqa: N802
+    def mainView(self) -> TreeView:
         _deprecated_accessor("mainView", "main_view")
         return self.main_view()
 
-    def blackboardView(self) -> BlackboardView:  # noqa: N802
+    def blackboardView(self) -> BlackboardView:
         _deprecated_accessor("blackboardView", "blackboard_view")
         return self.blackboard_view()
 
-    def blackboardStore(self) -> BlackboardStore:  # noqa: N802
+    def blackboardStore(self) -> BlackboardStore:
         _deprecated_accessor("blackboardStore", "blackboard_store")
         return self.blackboard_store()
 
-    def treeLogger(self) -> TreeLogger:  # noqa: N802
+    def treeLogger(self) -> TreeLogger:
         _deprecated_accessor("treeLogger", "tree_logger")
         return self.tree_logger()
 
-    def loopExecutionCheckBox(self) -> QCheckBox:  # noqa: N802
+    def loopExecutionCheckBox(self) -> QCheckBox:
         _deprecated_accessor("loopExecutionCheckBox", "loop_execution_check_box")
         return self.loop_execution_check_box()
 
@@ -1130,7 +1136,8 @@ class BehaviorTreeWidget(QTabWidget):
         self._buttons["Load"].setEnabled(True)
         self._buttons["New"].setEnabled(True)
         self._buttons["GoBack"].setEnabled(bool(self._levels))
-        self._buttons["Execute"].setToolTip("Resume execution" if state is ExecutionState.PAUSED else "Execute the tree")
+        paused = state is ExecutionState.PAUSED
+        self._buttons["Execute"].setToolTip("Resume execution" if paused else "Execute the tree")
         self._loop_box.setEnabled(loaded)
 
     def _sync_loop_box(self) -> None:
@@ -1148,7 +1155,7 @@ class BehaviorTreeWidget(QTabWidget):
             name = " > ".join(names).replace("[*]", "[*][*]")
             self.window().setWindowTitle(self.WINDOW_TITLE_FORMAT.format(filename=name))
 
-    def showEvent(self, event) -> None:  # noqa: N802
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         # The widget may have been embedded in its window after the tree was loaded.
         self._update_window_title()
@@ -1162,7 +1169,7 @@ class BehaviorTreeWidget(QTabWidget):
         # The user panned or zoomed: never jump back to a pending target.
         self._view_target_pending = False
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def closeEvent(self, event) -> None:
         if self.isWindow():
             self._blackboard_file.flush()
         if self.isWindow() and not self.ConfirmDiscardChanges():
@@ -1454,7 +1461,7 @@ class BehaviorTreeWidget(QTabWidget):
             plan = prepare_tree(data, problems, self._registry)
         except TreeFileError:
             raise
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             raise TreeFileError(f"'{os.path.basename(path)}' could not be loaded: {error}") from error
         document = TreeDocument(path, plan.config, legacy_blackboard=data.get("blackboard"))
         view = TreeView(self, self._frame_view, document)  # relative sub-tree file names are relative to its folder
@@ -1462,7 +1469,7 @@ class BehaviorTreeWidget(QTabWidget):
         self._loading = True
         try:
             install_nodes(view, plan)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             plan.discard()
             view.clear()
             view.deleteLater()
@@ -1486,7 +1493,9 @@ class BehaviorTreeWidget(QTabWidget):
         self._center_view(view, plan.center)
         # Centred again once the view has its final size (from the event loop).
         center = QPointF(plan.center) if plan.center is not None else None
-        QTimer.singleShot(0, view, lambda: self._center_view(view, center) if self._levels.level_of_view(view) else None)
+        QTimer.singleShot(
+            0, view, lambda: self._center_view(view, center) if self._levels.level_of_view(view) else None
+        )
         for problem in problems:
             self._report(LogLevel.WARNING, f"{os.path.basename(path)}: {problem}")
         self._log(LogLevel.INFO, f"Zoomed into the sub-tree '{path}' of '{node.GetTitle()}'")
@@ -1618,7 +1627,7 @@ class BehaviorTreeWidget(QTabWidget):
             plan = prepare_tree(data, problems, self._registry, blackboard)
         except TreeFileError:
             raise
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             raise TreeFileError(f"'{os.path.basename(path)}' could not be loaded: {error}") from error
         plan.blackboard_path = blackboard_path or blackboard_path_for(path)
         plan.new_blackboard = new_blackboard
@@ -1672,7 +1681,7 @@ class BehaviorTreeWidget(QTabWidget):
             return None, None, []
         try:
             return self._tree_data(quiet=True), self._blackboard.snapshot(), self._blackboard.reset_names()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("could not snapshot the current tree", exc_info=True)
             return None, None, []
 
@@ -1687,7 +1696,7 @@ class BehaviorTreeWidget(QTabWidget):
                 for name in resets:
                     if self._blackboard.has(name):
                         self._blackboard.set_reset(name, True)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("could not restore the previous tree")
 
     def _install_loaded_tree(
@@ -1701,7 +1710,7 @@ class BehaviorTreeWidget(QTabWidget):
             if self._executor.is_busy() or self._executor.state() is not ExecutionState.IDLE:
                 self._executor.stop()
             self._install_plan(plan)
-        except Exception as error:  # noqa: BLE001 - unexpected; put the previous tree back
+        except Exception as error:
             log.exception("loading %s failed", path)
             plan.discard()
             self._restore_previous(*previous)

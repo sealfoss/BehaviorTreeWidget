@@ -37,11 +37,12 @@ import functools
 import logging
 import threading
 import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from concurrent.futures import wait as wait_futures
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 import py_trees
 import shiboken6
@@ -153,7 +154,11 @@ class _TickOutcome:
 _orphaned_nodes: list = []
 
 #: The state a node shows for the status of its behaviour (INVALID: see _refresh_statuses).
-_SHOWN_STATUS = {Status.RUNNING: NodeStatus.RUNNING, Status.SUCCESS: NodeStatus.SUCCEEDED, Status.FAILURE: NodeStatus.FAILED}
+_SHOWN_STATUS = {
+    Status.RUNNING: NodeStatus.RUNNING,
+    Status.SUCCESS: NodeStatus.SUCCEEDED,
+    Status.FAILURE: NodeStatus.FAILED,
+}
 
 
 class TreeExecutor(QObject):
@@ -191,7 +196,7 @@ class TreeExecutor(QObject):
     #: Seconds one tick may spend waiting for worker-thread OnRun calls it started (see the class docs).
     TICK_WAIT_BUDGET = 0.1
 
-    def __init__(self, owner: "BehaviorTreeWidget", host: ExecutionHost | None = None, pool: WorkerPool | None = None):
+    def __init__(self, owner: BehaviorTreeWidget, host: ExecutionHost | None = None, pool: WorkerPool | None = None):
         """``host``: what the executor needs from ``owner`` (by default a
         :class:`~.execution_host.WidgetExecutionHost`); ``pool``: the worker threads running
         ``OnRun`` calls (by default the threads shared by every executor)."""
@@ -236,7 +241,7 @@ class TreeExecutor(QObject):
         self._subtreeNodeIdle.connect(self._delete_subtree_node, Qt.ConnectionType.QueuedConnection)
 
     @property
-    def _owner(self) -> "BehaviorTreeWidget":
+    def _owner(self) -> BehaviorTreeWidget:
         """The BehaviorTreeWidget (RuntimeError once it was deleted)."""
         return self._host.tree_widget()
 
@@ -254,7 +259,7 @@ class TreeExecutor(QObject):
         """Marks the run tokens of this executor."""
         return self._token_owner
 
-    def tree_widget(self) -> "BehaviorTreeWidget":
+    def tree_widget(self) -> BehaviorTreeWidget:
         """The ``tree`` passed to the nodes' OnStart / OnRun / OnTerminate."""
         return self._host.tree_widget()
 
@@ -413,7 +418,12 @@ class TreeExecutor(QObject):
             self._queue.pending.append(name)
             return
         queue = self._queue
-        if name in ("stop", "pause") and not queue.in_post_tick_handler() and not queue.busy and self._first_tick.isActive():
+        if (
+            name in ("stop", "pause")
+            and not queue.in_post_tick_handler()
+            and not queue.busy
+            and self._first_tick.isActive()
+        ):
             # Issued from the event loop (e.g. the Stop button while runs are chained from
             # executionFinished): takes effect before the pending first tick.
             self._first_tick.stop()
@@ -480,7 +490,7 @@ class TreeExecutor(QObject):
                     item()
                 else:
                     self._run_command(item)
-            except Exception:  # noqa: BLE001 - never let a queued command escape a Qt slot
+            except Exception:
                 log.exception("deferred execution command %r failed", item)
 
     # ------------------------------------------------------------------ command bodies (GUI thread)
@@ -577,7 +587,7 @@ class TreeExecutor(QObject):
         store.set_runtime_active(True)
         try:
             store.reset_entries(captured)
-        except Exception:  # noqa: BLE001 - e.g. a signal handler failed; never stop execution for it
+        except Exception:
             log.exception("resetting blackboard entries at the end of the loop failed")
         finally:
             store.set_runtime_active(self._state is not ExecutionState.IDLE)
@@ -663,7 +673,7 @@ class TreeExecutor(QObject):
             return
         try:
             self._tree.root.stop(Status.INVALID)
-        except Exception:  # noqa: BLE001 - e.g. user OnTerminate failures are logged already
+        except Exception:
             log.exception("error while halting the behavior tree")
             self._cancel_runs()
 

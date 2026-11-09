@@ -188,7 +188,8 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
         items = [ComboItem(LITERAL, None, "Print the Message")]
         items += [ComboItem(entry, entry, f"{kind} entry: print its value") for entry, kind in types.items()]
         if source is not None and source not in types:
-            items.append(ComboItem(f"{source} (missing)", source, f"The blackboard has no entry named {source!r}", True))
+            missing = f"The blackboard has no entry named {source!r}"
+            items.append(ComboItem(f"{source} (missing)", source, missing, True))
         return items
 
     # ------------------------------------------------------------------ user edits

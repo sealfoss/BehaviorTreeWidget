@@ -31,7 +31,7 @@ from .nodes import LeafNodeWidget
 from .serialization import tree_file_paths
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .widget import BehaviorTreeWidget
+    pass
 
 log = logging.getLogger("behavior_tree_widget")
 

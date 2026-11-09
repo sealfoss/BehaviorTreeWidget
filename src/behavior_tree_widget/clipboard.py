@@ -12,7 +12,8 @@ import atexit
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 import shiboken6
 from PySide6.QtCore import QByteArray, QMimeData

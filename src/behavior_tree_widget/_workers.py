@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any, Callable
+from typing import Any
 
 __all__ = ["WorkerPool", "leaf_pool", "run_in_daemon_thread"]
 

@@ -369,7 +369,7 @@ def blackboard_document(items: list) -> dict:
 
 def _read_json(path: str) -> Any:
     try:
-        with open(path, "r", encoding="utf-8-sig") as stream:
+        with open(path, encoding="utf-8-sig") as stream:
             return json.load(stream)
     except OSError as error:
         raise TreeFileError(f"Could not read '{path}': {error.strerror or error}") from error

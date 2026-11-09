@@ -207,7 +207,7 @@ class EntryRow(QWidget):
 
     selectionToggled = Signal()
 
-    def __init__(self, view: "BlackboardView", name: str, type_name: str):
+    def __init__(self, view: BlackboardView, name: str, type_name: str):
         super().__init__()
         self._view = view
         self._store = view.store()
@@ -333,7 +333,12 @@ class EntryRow(QWidget):
         """Detach the row from the view (it is about to be deleted)."""
         self._retired = True
         for widget in (
-            self.name_edit, self.value_widget, self.select_box, self.reset_box, self.move_up_button, self.move_down_button
+            self.name_edit,
+            self.value_widget,
+            self.select_box,
+            self.reset_box,
+            self.move_up_button,
+            self.move_down_button,
         ):
             if widget is not None and shiboken6.isValid(widget):
                 widget.blockSignals(True)

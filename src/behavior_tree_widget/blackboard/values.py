@@ -49,7 +49,9 @@ ENTRY_TYPES: dict[str, EntryType] = {
     "String": EntryType("String", "StringEntry.ui", "Value", ""),
     "Bool": EntryType("Bool", "BoolEntry.ui", "Value", False),
     "List": EntryType("List", "ListEntry.ui", "Values", [], container=True, example="[1, 2.5, 'text']"),
-    "Dictionary": EntryType("Dictionary", "ListEntry.ui", "Values", {}, container=True, example="{'key': 'value', 'n': 3}"),
+    "Dictionary": EntryType(
+        "Dictionary", "ListEntry.ui", "Values", {}, container=True, example="{'key': 'value', 'n': 3}"
+    ),
     "Set": EntryType("Set", "ListEntry.ui", "Values", set(), container=True, example="{1, 2, 3}"),
     "Object": EntryType("Object", "StringEntry.ui", "Value", None, user_creatable=False),
 }
@@ -100,7 +102,7 @@ def infer_type(value: Any) -> str:
 def _deepcopy_container(type_name: str, value: Any) -> Any:
     try:
         return copy.deepcopy(value)
-    except Exception as error:  # noqa: BLE001 - e.g. "cannot pickle '_thread.lock' object"
+    except Exception as error:
         raise TypeError(
             f"{type_name} entries must hold copyable values ({error}); "
             f"store such values in an Object entry: AddEntry(name, 'Object', value)"
@@ -166,7 +168,7 @@ class _NonFiniteNames(ast.NodeTransformer):
 
     NAMES = {"nan": float("nan"), "inf": float("inf"), "infinity": float("inf")}
 
-    def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802 - ast API
+    def visit_Name(self, node: ast.Name) -> ast.AST:
         value = self.NAMES.get(node.id.lower())
         if value is None:
             return node

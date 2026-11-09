@@ -73,17 +73,17 @@ if TYPE_CHECKING:  # pragma: no cover
 log = logging.getLogger("behavior_tree_widget")
 
 __all__ = [
-    "NodeStatus",
-    "ConnectionState",
-    "NodeWidget",
-    "CompositeNodeWidget",
-    "RootNodeWidget",
-    "NegationNodeWidget",
-    "LeafNodeWidget",
-    "UnknownLeafNodeWidget",
-    "SEQUENCE",
-    "SELECTOR",
     "NEGATION",
+    "SELECTOR",
+    "SEQUENCE",
+    "CompositeNodeWidget",
+    "ConnectionState",
+    "LeafNodeWidget",
+    "NegationNodeWidget",
+    "NodeStatus",
+    "NodeWidget",
+    "RootNodeWidget",
+    "UnknownLeafNodeWidget",
 ]
 
 SEQUENCE = "Sequence"
@@ -103,7 +103,7 @@ class NodeStatus(str, Enum):
         return self.value
 
     @classmethod
-    def from_py_trees(cls, status) -> "NodeStatus":
+    def from_py_trees(cls, status) -> NodeStatus:
         """Map a ``py_trees.common.Status`` to a :class:`NodeStatus`."""
         name = getattr(status, "name", None)
         return {
@@ -156,7 +156,7 @@ class _WheelGuard(QObject):
     Without this, scrolling the tree view over a node would change field values.
     """
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt API)
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Wheel and isinstance(watched, QWidget) and not watched.hasFocus():
             event.ignore()
             return True
@@ -308,7 +308,9 @@ class NodeWidget(QWidget):
         self._title_label: QLabel = self._require_child(QLabel, "Title")
         self._title_label.setContentsMargins(4, 1, 4, 1)  # keep the box frame off the text
         self._status_label: QLabel = self._require_child(QLabel, "Status")
-        self._parent_label: QLabel | None = self._find_child(QLabel, "ParentConnection") if self.HasParentConnection() else None
+        self._parent_label: QLabel | None = (
+            self._find_child(QLabel, "ParentConnection") if self.HasParentConnection() else None
+        )
         self._children_label: QLabel | None = None
         if self.HasChildConnections():
             self._children_label = self._find_child(QLabel, "ChildConnections") or self._find_child(
@@ -447,7 +449,7 @@ class NodeWidget(QWidget):
             function()
         except RuntimeError:  # widget deleted while the call was queued
             log.debug("queued node update skipped", exc_info=True)
-        except Exception:  # noqa: BLE001 - never let an update escape the Qt slot
+        except Exception:
             log.exception("%s: queued update failed", self)
 
     def _is_runtime_change(self) -> bool:
@@ -1061,7 +1063,9 @@ class LeafNodeWidget(NodeWidget):
         with self._lock:
             items = list(self._fields.items())
         # Every widget is made before any is installed: a failure leaves no half-built rows.
-        rows = [(key, _field_key_box(str(key)), self._create_editor(key, value), field_kind(value)) for key, value in items]
+        rows = [
+            (key, _field_key_box(str(key)), self._create_editor(key, value), field_kind(value)) for key, value in items
+        ]
         for row, (key, key_box, editor, kind) in enumerate(rows):
             editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             layout.addWidget(key_box, row, 0)
@@ -1263,7 +1267,11 @@ class UnknownLeafNodeWidget(LeafNodeWidget):
         self._raw_selections = dict(selections) if isinstance(selections, dict) else {}
         with self._lock:
             self._field_selections = (
-                {key: index for key, index in selections.items() if isinstance(index, int) and not isinstance(index, bool)}
+                {
+                    key: index
+                    for key, index in selections.items()
+                    if isinstance(index, int) and not isinstance(index, bool)
+                }
                 if isinstance(selections, dict)
                 else {}
             )

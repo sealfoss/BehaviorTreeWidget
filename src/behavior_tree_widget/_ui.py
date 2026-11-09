@@ -17,8 +17,8 @@ import importlib
 import logging
 import os
 import threading
+from collections.abc import Callable
 from importlib import resources
-from typing import Callable
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice

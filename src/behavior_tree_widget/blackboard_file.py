@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -15,7 +15,7 @@ from .tree_log import LogLevel
 
 log = logging.getLogger("behavior_tree_widget")
 
-__all__ = ["BlackboardFileWriter", "SAVE_ERRORS"]
+__all__ = ["SAVE_ERRORS", "BlackboardFileWriter"]
 
 #: Errors writing a file can raise.
 SAVE_ERRORS = (OSError, ValueError, TypeError, RecursionError)

@@ -20,8 +20,8 @@ import shiboken6
 from PySide6.QtCore import QPointF
 
 from .blackboard import BlackboardStore
-from .geometry import clamp_to_scene, iter_subtree
 from .config import TreeConfig
+from .geometry import clamp_to_scene, iter_subtree
 from .nodes import COMPOSITE_TYPES, SEQUENCE, NodeWidget, RootNodeWidget, UnknownLeafNodeWidget, relayout
 from .registry import ROOT, NodeTypeRegistry
 from .serialization import FORMAT_NAME, FORMAT_VERSION, TreeFileError, decode_value, encode_value, is_finite_number
@@ -210,7 +210,8 @@ def prepare_connections(plan: TreePlan, items: Any, problems: list[str]) -> None
         while ancestor is not None and ancestor != child_id:
             ancestor = parent_of.get(ancestor)
         if ancestor == child_id:
-            problems.append(f"connection {index} ({parent.GetTitle()!r} -> {child.GetTitle()!r}) creates a cycle; skipped")
+            pair = f"{parent.GetTitle()!r} -> {child.GetTitle()!r}"
+            problems.append(f"connection {index} ({pair}) creates a cycle; skipped")
             continue
         parent_of[child_id] = parent_id
         child_count[parent_id] = child_count.get(parent_id, 0) + 1
@@ -221,13 +222,14 @@ def install_nodes(view: TreeView, plan: TreePlan) -> None:
     """Add the nodes and connections of ``plan`` to ``view`` (the plan gives up its nodes)."""
     by_id: dict[str, NodeWidget] = {}
     nodes, plan.nodes = plan.nodes, []
-    index = 0
+    added = 0
     try:
-        for index, (node, pos) in enumerate(nodes):
+        for node, pos in nodes:
             view.add_node(node, pos)
             by_id[node.GetId()] = node
+            added += 1
     except Exception:
-        for node, _ in nodes[index:]:
+        for node, _ in nodes[added:]:
             if shiboken6.isValid(node) and node._item is None:
                 node.deleteLater()
         raise
@@ -235,7 +237,9 @@ def install_nodes(view: TreeView, plan: TreePlan) -> None:
         view.connect_nodes(by_id[parent_id], by_id[child_id])
 
 
-def load_detached_tree(data: dict, registry: NodeTypeRegistry, owner: Any, name: str) -> tuple[RootNodeWidget, list[NodeWidget]]:
+def load_detached_tree(
+    data: dict, registry: NodeTypeRegistry, owner: Any, name: str
+) -> tuple[RootNodeWidget, list[NodeWidget]]:
     """Create the nodes of the tree file ``data`` without showing them: its Root and the nodes
     connected below it, linked as in the file (the nodes of a Sub-Tree node being executed).
 
@@ -251,11 +255,11 @@ def load_detached_tree(data: dict, registry: NodeTypeRegistry, owner: Any, name:
     try:
         prepare_nodes(plan, data.get("nodes", []), problems, registry)
         prepare_connections(plan, data.get("connections", []), problems)
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         plan.discard()
         raise TreeFileError(f"'{name}' could not be loaded: {error}") from error
     prepared, plan.nodes = plan.nodes, []
-    from .document import TreeDocument  # noqa: PLC0415 - document.py imports this module
+    from .document import TreeDocument
 
     document = TreeDocument()  # a tree that is not shown
     try:
@@ -269,7 +273,7 @@ def load_detached_tree(data: dict, registry: NodeTypeRegistry, owner: Any, name:
             document.link(by_id[parent_id], by_id[child_id])
         root = document.root()
         nodes = iter_subtree(root)
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         for node, _ in prepared:
             if shiboken6.isValid(node):
                 node.deleteLater()

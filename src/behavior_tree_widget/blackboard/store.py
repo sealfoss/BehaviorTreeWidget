@@ -6,8 +6,9 @@ import copy
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import py_trees
 import shiboken6
@@ -601,7 +602,7 @@ class BlackboardStore(QObject):
             self._loop_capture = None
             try:
                 self._client.unregister(clear=True)
-            except Exception:  # noqa: BLE001 - e.g. Blackboard.clear() was called globally
+            except Exception:
                 log.debug("could not unregister blackboard client", exc_info=True)
         if notify and shiboken6.isValid(self):
             with self.batch():

@@ -54,11 +54,11 @@ if TYPE_CHECKING:  # pragma: no cover
 log = logging.getLogger("behavior_tree_widget")
 
 __all__ = [
+    "LITERAL",
+    "PROBLEM_COLOR",
     "BlackboardValueNodeWidget",
     "EvaluationNodeWidget",
     "SetNodeWidget",
-    "LITERAL",
-    "PROBLEM_COLOR",
     "convert_literal",
     "values_equal",
 ]
@@ -327,9 +327,11 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
             ]
         if compare is not None and all(item.data != compare for item in items):
             if compare not in types:
-                items.append(ComboItem(f"{compare} (missing)", compare, f"The blackboard has no entry named {compare!r}", True))
+                missing = f"The blackboard has no entry named {compare!r}"
+                items.append(ComboItem(f"{compare} (missing)", compare, missing, True))
             elif compare == name:
-                items.append(ComboItem(f"{compare} (itself)", compare, "Compare To names the Value Name entry itself", True))
+                itself = "Compare To names the Value Name entry itself"
+                items.append(ComboItem(f"{compare} (itself)", compare, itself, True))
             else:
                 kind = types[compare]
                 tooltip = f"{compare!r} is an entry of type {kind}, not {value_type or 'the Value Name type'}"

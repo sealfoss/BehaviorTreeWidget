@@ -108,12 +108,12 @@ class MoveTo(LeafNodeWidget):
         while True:
             if self.CancelRequested():
                 return False
-            delta = [t - p for t, p in zip(target, position)]
+            delta = [t - p for t, p in zip(target, position, strict=True)]
             distance = (delta[0] ** 2 + delta[1] ** 2) ** 0.5
             if distance <= step:
                 tree.SetEntry(target, "position")
                 return True
-            position = [p + d / distance * step for p, d in zip(position, delta)]
+            position = [p + d / distance * step for p, d in zip(position, delta, strict=True)]
             tree.SetEntry([round(p, 3) for p in position], "position")
             time.sleep(0.05)
 
@@ -171,7 +171,7 @@ class DemoWindow(QMainWindow):
             )
         self.resize(1000, 720)
 
-    def closeEvent(self, event):  # noqa: N802
+    def closeEvent(self, event):
         if not self.tree.ConfirmDiscardChanges():
             event.ignore()
             return
@@ -196,7 +196,7 @@ def _unconsumed_arguments(argv: list[str], arguments: list[str]) -> list[str]:
     def same(arg: str, qt_arg: str) -> bool:
         return arg == qt_arg or QFile.decodeName(QFile.encodeName(arg)) == qt_arg
 
-    @functools.lru_cache(maxsize=None)
+    @functools.cache
     def kept(position: int, index: int, waiting: int) -> frozenset[tuple[str, ...]]:
         """The entries ``argv[position:]`` can keep while leaving ``arguments[index:]`` (at most two
         different ones); ``waiting``: options removed before ``position`` whose value was not."""

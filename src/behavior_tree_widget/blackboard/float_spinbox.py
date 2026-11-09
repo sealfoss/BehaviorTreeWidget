@@ -131,7 +131,7 @@ class FloatSpinBox(QDoubleSpinBox):
                 self._exact = pending
                 self.valueChanged.emit(self.value())
 
-    def stepBy(self, steps: int) -> None:  # noqa: N802 - Qt API
+    def stepBy(self, steps: int) -> None:
         text = self.lineEdit().text()
         typed = _parse_float_text(text)
         if (
@@ -148,7 +148,7 @@ class FloatSpinBox(QDoubleSpinBox):
                 self._exact, self._exact_at = typed, self.valueFromText(text)
         super().stepBy(steps)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         # A typed or pasted "," goes into the text as "." through QLineEdit's own insert
         # path (a text that validate() has to change is set anew, which clears undo).
         edit = self.lineEdit()
@@ -188,7 +188,7 @@ class FloatSpinBox(QDoubleSpinBox):
             edit.clear()
 
     # ------------------------------------------------------------------ text
-    def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt API
+    def textFromValue(self, value: float) -> str:
         if self._pending_exact is not None and value == self._exact_at:
             return repr(self._pending_exact)
         if self._exact is not None and (self._exact_at is None or value == self._exact_at):
@@ -198,7 +198,7 @@ class FloatSpinBox(QDoubleSpinBox):
             return repr(value)  # the largest float was typed, not infinity
         return repr(self._default_exact(value))
 
-    def valueFromText(self, text: str) -> float:  # noqa: N802 - Qt API
+    def valueFromText(self, text: str) -> float:
         value = _parse_float_text(text)
         if value is None:
             return self.value()
@@ -212,7 +212,7 @@ class FloatSpinBox(QDoubleSpinBox):
             return self._exact_at  # the value shown: keep Qt's (rounded) copy, nothing changed
         return max(-_DBL_MAX, min(_DBL_MAX, value))
 
-    def validate(self, text: str, position: int):  # noqa: D102 - Qt API
+    def validate(self, text: str, position: int):
         normalized = text.replace(",", ".")
         stripped = normalized.strip()
         try:

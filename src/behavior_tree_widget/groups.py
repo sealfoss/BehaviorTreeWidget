@@ -165,7 +165,7 @@ class GroupNodeWidget(BoxNodeWidget):
         if self._name_edit.text() != text:
             self._refresh_title()
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt API)
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self._name_edit and watched is not None:
             kind = event.type()
             if kind == QEvent.Type.FocusIn:

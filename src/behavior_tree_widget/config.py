@@ -56,7 +56,7 @@ class TreeConfig:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict | None) -> "TreeConfig":
+    def from_dict(cls, data: dict | None) -> TreeConfig:
         """Build a config from saved data, ignoring unknown keys and invalid values."""
         config = cls()
         if not isinstance(data, dict):
@@ -72,7 +72,7 @@ class TreeConfig:
             config.log_level = level
         return config
 
-    def copy(self) -> "TreeConfig":
+    def copy(self) -> TreeConfig:
         return replace(self)
 
 

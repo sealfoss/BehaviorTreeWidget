@@ -9,8 +9,9 @@ registered with one widget (and globally with :func:`register_node_type`).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .blackboard_aware import BlackboardAwareLeaf
 from .blackboard_nodes import BlackboardValueNodeWidget, EvaluationNodeWidget, SetNodeWidget
@@ -37,12 +38,12 @@ log = logging.getLogger("behavior_tree_widget")
 __all__ = [
     "BUILTIN_KINDS",
     "BUILTIN_LEAF_TYPES",
-    "NodeKind",
-    "NodeTypeRegistry",
     "PARENT_TYPES",
     "RESERVED_TYPE_NAMES",
     "ROOT",
     "YIELDING_TYPE_NAMES",
+    "NodeKind",
+    "NodeTypeRegistry",
     "register_node_type",
     "registered_node_types",
 ]
@@ -141,7 +142,8 @@ def _type_name_of(cls: type) -> str:
 def _validate_leaf_class(cls: Any) -> str:
     if not isinstance(cls, type) or not issubclass(cls, LeafNodeWidget):
         raise TypeError(f"node types must be subclasses of LeafNodeWidget, not {cls!r}")
-    if cls in (LeafNodeWidget, BlackboardAwareLeaf, BlackboardValueNodeWidget) or issubclass(cls, UnknownLeafNodeWidget):
+    abstract = (LeafNodeWidget, BlackboardAwareLeaf, BlackboardValueNodeWidget)
+    if cls in abstract or issubclass(cls, UnknownLeafNodeWidget):
         raise TypeError(f"{cls.__name__} cannot be registered; register a subclass that implements OnRun")
     name = _type_name_of(cls)
     if not isinstance(name, str) or not name:
@@ -252,11 +254,14 @@ class NodeTypeRegistry:
         for kind in BUILTIN_KINDS:
             if not self.offers(kind.name) or kind.is_box:
                 continue
-            entries.append((kind.group, kind.name, label(title_of[kind.name], kind.name) if kind.leaf_class else kind.name))
+            text = label(title_of[kind.name], kind.name) if kind.leaf_class else kind.name
+            entries.append((kind.group, kind.name, text))
         for title, name in sorted(leaves, key=lambda pair: (pair[0].lower(), pair[1])):
             if not self.offers(name):
                 entries.append(("leaf", name, label(title, name)))
-        entries += [(kind.group, kind.name, kind.name) for kind in BUILTIN_KINDS if kind.is_box and self.offers(kind.name)]
+        entries += [
+            (kind.group, kind.name, kind.name) for kind in BUILTIN_KINDS if kind.is_box and self.offers(kind.name)
+        ]
         return entries
 
     def create(self, type_name: str, memory: bool = True) -> NodeWidget:
@@ -296,7 +301,7 @@ class NodeTypeRegistry:
             return UnknownLeafNodeWidget(type_name), not_registered
         try:
             return cls(), None
-        except Exception as error:  # noqa: BLE001 - user class failed to build
+        except Exception as error:
             log.exception("could not create node of type %r", type_name)
             return UnknownLeafNodeWidget(type_name), (
                 f"node {label}: {type_name} could not be created ({error}); a placeholder was used"

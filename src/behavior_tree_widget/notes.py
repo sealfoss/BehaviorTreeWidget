@@ -121,13 +121,13 @@ class _FitLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
 
     # The note's size is chosen by the user: the text never asks for room.
-    def hasHeightForWidth(self) -> bool:  # noqa: N802 (Qt API)
+    def hasHeightForWidth(self) -> bool:
         return False
 
-    def sizeHint(self) -> QSize:  # noqa: N802
+    def sizeHint(self) -> QSize:
         return QSize(0, 0)
 
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
+    def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)
 
     def text_rect(self) -> QRect:
@@ -147,7 +147,7 @@ class _FitLabel(QLabel):
             font.setPixelSize(pixels)
             self.setFont(font)
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.fit()
         self.resized.emit()
@@ -171,14 +171,14 @@ class _NoteEditor(QPlainTextEdit):
         self.setStyleSheet(EDITOR_STYLE)
         self.hide()
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802
+    def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
             event.accept()
             self.escapePressed.emit()
             return
         super().keyPressEvent(event)
 
-    def focusOutEvent(self, event) -> None:  # noqa: N802
+    def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         if event.reason() != Qt.FocusReason.PopupFocusReason:  # not for the editor's own context menu
             self.focusLost.emit()
@@ -270,10 +270,10 @@ class BoxNodeWidget(NodeWidget):
             self._notify_geometry()
         return width, height
 
-    def sizeHint(self) -> QSize:  # noqa: N802
+    def sizeHint(self) -> QSize:
         return QSize(self._box_size)
 
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
+    def minimumSizeHint(self) -> QSize:
         return QSize(self._box_size)
 
     def _notify_geometry(self) -> None:
@@ -283,7 +283,7 @@ class BoxNodeWidget(NodeWidget):
         self._place_handles()
         self.geometryHintChanged.emit()
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._place_handles()
 

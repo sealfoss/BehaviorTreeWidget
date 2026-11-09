@@ -38,7 +38,8 @@ from __future__ import annotations
 import logging
 import math
 import weakref
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import shiboken6
 from PySide6.QtCore import QEvent, QLineF, QObject, QPoint, QPointF, QRect, QRectF, Qt, Signal
@@ -46,6 +47,7 @@ from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QApplication, QColorDialog, QGraphicsScene, QGraphicsView, QInputDialog, QMenu, QWidget
 
 from . import menus
+from .document import TreeDocument
 from .geometry import (
     PASTE_GAP,
     SCENE_EXTENT,
@@ -81,7 +83,6 @@ from .items import (
     NodeItem,
     SelectionBandItem,
 )
-from .document import TreeDocument
 from .nodes import (
     CHILDREN,
     PARENT,
@@ -143,11 +144,11 @@ GROUP_Z_BASE = -2e9  # groups are stacked below everything else, notes included
 class _OutsideClickFilter(QObject):
     """Deselects the view's connection when the mouse is pressed anywhere else in its window."""
 
-    def __init__(self, view: "TreeView"):
+    def __init__(self, view: TreeView):
         super().__init__(view)
         self._view = view
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt API)
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() != QEvent.Type.MouseButtonPress:
             return False
         view = self._view
@@ -204,7 +205,7 @@ class TreeView(QGraphicsView):
 
     def __init__(
         self,
-        owner: "BehaviorTreeWidget | None" = None,
+        owner: BehaviorTreeWidget | None = None,
         parent: QWidget | None = None,
         document: TreeDocument | None = None,
     ):
@@ -252,7 +253,7 @@ class TreeView(QGraphicsView):
         self._outside_filter_installed = False
 
     @property
-    def _owner(self) -> "BehaviorTreeWidget | None":
+    def _owner(self) -> BehaviorTreeWidget | None:
         return self._owner_ref() if self._owner_ref is not None else None
 
     @property
@@ -277,11 +278,11 @@ class TreeView(QGraphicsView):
             app.removeEventFilter(self._outside_filter)
         self._outside_filter_installed = install
 
-    def hideEvent(self, event) -> None:  # noqa: N802
+    def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._set_outside_filter(False)
 
-    def showEvent(self, event) -> None:  # noqa: N802
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         self._set_outside_filter(self._selected_connection is not None)
         self.shown.emit()
@@ -359,8 +360,8 @@ class TreeView(QGraphicsView):
         if self._locked:
             raise RuntimeError("the tree structure cannot be changed while the tree is executing; stop it first")
 
-    def add_node(self, node: NodeWidget, pos: QPointF | tuple[float, float] = QPointF(0, 0)) -> NodeItem:
-        """Add ``node`` with its top-left corner at scene position ``pos``."""
+    def add_node(self, node: NodeWidget, pos: QPointF | tuple[float, float] | None = None) -> NodeItem:
+        """Add ``node`` with its top-left corner at scene position ``pos`` (default: the origin)."""
         self._check_unlocked()
         if node._item is not None:
             raise ValueError(f"{node!r} is already part of a tree view")
@@ -368,7 +369,7 @@ class TreeView(QGraphicsView):
             raise ValueError("a tree can only have one root node")
         item = NodeItem(node, self)
         self.scene().addItem(item)
-        item.setPos(QPointF(*pos) if isinstance(pos, tuple) else QPointF(pos))
+        item.setPos(QPointF() if pos is None else QPointF(*pos) if isinstance(pos, tuple) else QPointF(pos))
         self.raise_node(node)
         node._canvas = self
         node._tree = self._owner
@@ -673,7 +674,7 @@ class TreeView(QGraphicsView):
             active.cancel()
         self.viewport().unsetCursor()
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt API)
+    def mousePressEvent(self, event) -> None:
         active = self._active
         if active is not None:
             # A press while a gesture is active means its release was lost (or a second
@@ -788,7 +789,7 @@ class TreeView(QGraphicsView):
         Hit.NODE: _press_node,
     }
 
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+    def mouseMoveEvent(self, event) -> None:
         active = self._active
         if active is not None and active.kind is not GestureKind.PASSTHROUGH and not active.holds(event.buttons()):
             self._abandon_gesture()
@@ -798,7 +799,7 @@ class TreeView(QGraphicsView):
         else:
             active.move(event.position().toPoint(), event)
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, event) -> None:
         active = self._active
         if active is None:
             super().mouseReleaseEvent(event)
@@ -807,7 +808,7 @@ class TreeView(QGraphicsView):
         if active.kind is not GestureKind.PASSTHROUGH:
             event.accept()
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+    def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             hit = self.hit_test(event.position().toPoint())
             if hit.kind != Hit.INTERACTIVE:
@@ -903,11 +904,15 @@ class TreeView(QGraphicsView):
             # A note has no input widget besides its text editor; its item can keep the scene focus
             # after editing ended (e.g. while the window was inactive), which must not block the keys.
             return False
-        if isinstance(item, NodeItem) and isinstance(item.node, GroupNodeWidget) and not item.node.name_editor().hasFocus():
+        if (
+            isinstance(item, NodeItem)
+            and isinstance(item.node, GroupNodeWidget)
+            and not item.node.name_editor().hasFocus()
+        ):
             return False  # likewise for a group whose name editor does not have the keyboard
         return item is not None
 
-    def event(self, event) -> bool:  # noqa: D102 - Qt API
+    def event(self, event) -> bool:
         if (
             event.type() == QEvent.Type.ShortcutOverride
             and not self._editor_has_focus()
@@ -917,7 +922,7 @@ class TreeView(QGraphicsView):
             return True
         return super().event(event)
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802
+    def keyPressEvent(self, event) -> None:
         key = event.key()
         if key == Qt.Key.Key_Escape:
             if isinstance(self._active, ConnectGesture):
@@ -974,7 +979,7 @@ class TreeView(QGraphicsView):
             return False
         try:
             return self._owner._copy_nodes(self.selected_nodes())
-        except Exception:  # noqa: BLE001 - never let a key press raise
+        except Exception:
             log.exception("copying nodes failed")
             return False
 
@@ -987,7 +992,7 @@ class TreeView(QGraphicsView):
             return []
         try:
             pasted = self._owner._paste_nodes()
-        except Exception:  # noqa: BLE001 - never let a key press raise
+        except Exception:
             log.exception("pasting nodes failed")
             return []
         if pasted:
@@ -997,7 +1002,7 @@ class TreeView(QGraphicsView):
             self.ensureVisible(area, 40, 40)
         return pasted
 
-    def focusOutEvent(self, event) -> None:  # noqa: N802
+    def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         reason = event.reason()
         if reason == Qt.FocusReason.PopupFocusReason:
@@ -1011,7 +1016,7 @@ class TreeView(QGraphicsView):
         # anywhere else" deselects a selected connection.
         self.select_connection(None)
 
-    def wheelEvent(self, event) -> None:  # noqa: N802
+    def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             steps = event.angleDelta().y() / 120.0
             if steps:
@@ -1026,7 +1031,7 @@ class TreeView(QGraphicsView):
         self.navigated.emit()
 
     # ================================================================== context menus
-    def contextMenuEvent(self, event) -> None:  # noqa: N802
+    def contextMenuEvent(self, event) -> None:
         if self._gesture is not GestureKind.IDLE:
             event.accept()
             return
@@ -1159,14 +1164,14 @@ class TreeView(QGraphicsView):
             self.modified.emit()
 
     # ================================================================== painting
-    def changeEvent(self, event) -> None:  # noqa: N802
+    def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.EnabledChange:
             if not self.isEnabled():
                 self._reset_gesture()
             self.viewport().update()
 
-    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
+    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         palette = self.palette()
         base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
         painter.fillRect(rect, base)
@@ -1194,7 +1199,7 @@ class TreeView(QGraphicsView):
                 painter.drawLines(batch)
         painter.restore()
 
-    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
         if self.isEnabled():
             return
         painter.save()

@@ -19,8 +19,9 @@ import functools
 import inspect
 import traceback
 import weakref
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import py_trees
 from py_trees.common import Status
@@ -67,7 +68,7 @@ def describe_error(error: BaseException) -> str:
     return f"{type(error).__name__}: {text}" if text else type(error).__name__
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _on_run_takes_tree(cls: type) -> bool:
     """True if ``cls.OnRun`` accepts the tree argument (``OnRun(self, tree)``)."""
     try:
@@ -83,7 +84,7 @@ def _on_run_takes_tree(cls: type) -> bool:
     return positional >= 2  # self + tree
 
 
-def call_on_run(node: LeafNodeWidget, tree: "BehaviorTreeWidget | None") -> Any:
+def call_on_run(node: LeafNodeWidget, tree: BehaviorTreeWidget | None) -> Any:
     """Call ``node.OnRun(tree)`` (or ``node.OnRun()`` for overrides without the argument)."""
     if _on_run_takes_tree(type(node)):
         return node.OnRun(tree)
@@ -95,7 +96,7 @@ class LeafExecutor(Protocol):
 
     token_owner: object  # marks the run tokens of this executor
 
-    def tree_widget(self) -> "BehaviorTreeWidget":
+    def tree_widget(self) -> BehaviorTreeWidget:
         """The ``tree`` passed to ``OnStart`` / ``OnRun`` / ``OnTerminate``."""
 
     def generation(self) -> int:
@@ -263,7 +264,9 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
             self.node.OnTerminate(self.tree, NodeStatus.from_py_trees(new_status))
         except Exception as error:  # noqa: BLE001 - user code
             self.executor.report(
-                LogLevel.ERROR, f"{self.executor.label(self)}: OnTerminate raised {describe_error(error)}", exc_info=error
+                LogLevel.ERROR,
+                f"{self.executor.label(self)}: OnTerminate raised {describe_error(error)}",
+                exc_info=error,
             )
 
     def _record_error(self, error: BaseException, where: str) -> None:

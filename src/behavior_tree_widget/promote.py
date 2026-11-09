@@ -7,14 +7,15 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF
 
 from ._common import file_key
-from .geometry import clamp_to_scene
 from .config import TreeConfig
+from .geometry import clamp_to_scene
 from .groups import GroupNodeWidget
 from .nodes import SEQUENCE, CompositeNodeWidget, NodeWidget, RootNodeWidget, relayout
 from .notes import BoxNodeWidget
@@ -28,7 +29,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
 log = logging.getLogger("behavior_tree_widget")
 
-__all__ = ["INVALID_FILE_NAME_CHARACTERS", "Promotion", "plan_promotion", "replace_group", "subtree_path", "write_subtree"]
+__all__ = [
+    "INVALID_FILE_NAME_CHARACTERS",
+    "Promotion",
+    "plan_promotion",
+    "replace_group",
+    "subtree_path",
+    "write_subtree",
+]
 
 #: Characters a group name cannot contain when it is promoted to a sub-tree (it names a file).
 INVALID_FILE_NAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

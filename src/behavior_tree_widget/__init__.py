@@ -30,17 +30,16 @@ if _sys.stdout is None:
 if _sys.stderr is None:
     _sys.stderr = open(_os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 
-from py_trees.common import Status  # noqa: E402
+from py_trees.common import Status
 
-from ._runctx import ExecutionCancelled  # noqa: E402
-
-from .blackboard import BlackboardStore, BlackboardView  # noqa: E402
-from .blackboard_nodes import EvaluationNodeWidget, SetNodeWidget  # noqa: E402
-from .config import TreeConfig  # noqa: E402
-from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget  # noqa: E402
-from .groups import GroupNodeWidget  # noqa: E402
-from .network_nodes import UdpMessageNodeWidget  # noqa: E402
-from .nodes import (  # noqa: E402
+from ._runctx import ExecutionCancelled
+from .blackboard import BlackboardStore, BlackboardView
+from .blackboard_nodes import EvaluationNodeWidget, SetNodeWidget
+from .config import TreeConfig
+from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget
+from .groups import GroupNodeWidget
+from .network_nodes import UdpMessageNodeWidget
+from .nodes import (
     CompositeNodeWidget,
     LeafNodeWidget,
     NegationNodeWidget,
@@ -49,12 +48,12 @@ from .nodes import (  # noqa: E402
     RootNodeWidget,
     UnknownLeafNodeWidget,
 )
-from .notes import BoxNodeWidget, NotesNodeWidget  # noqa: E402
-from .print_node import PrintMessageNodeWidget  # noqa: E402
-from .serialization import TreeFileError, tree_file_paths  # noqa: E402
-from .subtree import SubTreeNodeWidget  # noqa: E402
-from .tree_log import LogLevel, TreeLogger, flush_logs  # noqa: E402
-from .widget import BehaviorTreeWidget, register_node_type, registered_node_types  # noqa: E402
+from .notes import BoxNodeWidget, NotesNodeWidget
+from .print_node import PrintMessageNodeWidget
+from .serialization import TreeFileError, tree_file_paths
+from .subtree import SubTreeNodeWidget
+from .tree_log import LogLevel, TreeLogger, flush_logs
+from .widget import BehaviorTreeWidget, register_node_type, registered_node_types
 
 __version__ = "0.9.0"
 
@@ -86,9 +85,9 @@ __all__ = [
     "TreeLogger",
     "UdpMessageNodeWidget",
     "UnknownLeafNodeWidget",
+    "__version__",
     "flush_logs",
     "register_node_type",
     "registered_node_types",
     "tree_file_paths",
-    "__version__",
 ]

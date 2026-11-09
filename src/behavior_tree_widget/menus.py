@@ -48,7 +48,8 @@ def build_add_menu(view: TreeView, scene_pos: QPointF, connect_to: tuple[NodeWid
         action.setData(type_name)
         action.setEnabled(not locked)
         action.triggered.connect(
-            lambda _checked=False, t=type_name, p=QPointF(scene_pos), c=connect_to: view._add_node_from_menu(t, p, c)
+            # The defaults bind this action's values (a copy of the point for each action).
+            lambda _checked=False, t=type_name, p=QPointF(scene_pos), c=connect_to: view._add_node_from_menu(t, p, c)  # noqa: B008
         )
     if locked:
         menu.addSeparator()

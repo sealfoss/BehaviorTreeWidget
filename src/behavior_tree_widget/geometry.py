@@ -6,7 +6,8 @@ Pure helpers without view state, used by :mod:`.canvas`, :mod:`.items` and the w
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QPainterPath

@@ -19,7 +19,8 @@ adding one entry to a blackboard of fifty inserts one row instead of rebuilding 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import shiboken6
 from PySide6.QtCore import QSignalBlocker, Qt
