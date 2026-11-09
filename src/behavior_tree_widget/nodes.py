@@ -24,6 +24,7 @@ Example::
 
 from __future__ import annotations
 
+import bisect
 import copy
 import functools
 import inspect
@@ -35,6 +36,7 @@ import uuid
 import warnings
 import weakref
 from enum import Enum
+from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 import shiboken6
@@ -280,6 +282,11 @@ class NodeWidget(QWidget):
         self._edited_selections: set[str] = set()  # list fields whose selection was changed after loading
         self._parent: NodeWidget | None = None
         self._children: list[NodeWidget] = []
+        # GetChildren() cache: the children in execution order and their order keys, worked out
+        # for _children as it was then (_order_basis); None: work it out at the next call.
+        self._order_nodes: list[NodeWidget] | None = None
+        self._order_keys: list[tuple[float, float]] = []
+        self._order_basis: tuple[NodeWidget, ...] = ()
         self._status = NodeStatus.READY
         self._error: str | None = None
         self._run_token = None  # _runctx.RunToken of the current / last run
@@ -590,8 +597,43 @@ class NodeWidget(QWidget):
     def GetChildren(self) -> list[NodeWidget]:
         """Children in execution order: left to right as shown in the view (ties: top first)."""
         with self._lock:
-            children = list(self._children)
-        return sorted(children, key=lambda node: node._order_key())
+            basis = tuple(self._children)
+            if self._order_nodes is not None and basis == self._order_basis:
+                return list(self._order_nodes)
+        # Stable: children at exactly the same place keep the order in which they were connected.
+        keyed = sorted(((child._order_key(), child) for child in basis), key=itemgetter(0))
+        nodes = [child for _, child in keyed]
+        with self._lock:
+            if tuple(self._children) == basis:
+                self._order_nodes, self._order_keys, self._order_basis = nodes, [key for key, _ in keyed], basis
+        return list(nodes)
+
+    def _child_moved(self, child: NodeWidget) -> tuple[int, int] | None:
+        """Keep the cached order of the children (see :meth:`GetChildren`) after ``child`` moved or
+        changed its size (GUI thread; the view calls it for every such change).
+
+        Returns ``(old index, new index)`` of ``child``, or None when the order is worked out
+        again at the next :meth:`GetChildren` (it was not cached, or ``child`` now lies at exactly
+        the same place as a sibling: the full sort then keeps the order of the connections).
+        """
+        with self._lock:
+            nodes = self._order_nodes
+            if nodes is None or tuple(self._children) != self._order_basis or child not in self._order_basis:
+                self._order_nodes = None
+                return None
+            old = nodes.index(child)
+            keys = self._order_keys
+            key = child._order_key()
+            if key == keys[old]:
+                return old, old
+            del nodes[old], keys[old]
+            new = bisect.bisect_left(keys, key)
+            if (new < len(keys) and keys[new] == key) or (new > 0 and keys[new - 1] == key):
+                self._order_nodes = None
+                return None
+            nodes.insert(new, child)
+            keys.insert(new, key)
+            return old, new
 
     def _order_key(self) -> tuple[float, float]:
         if self._item is None:
@@ -627,6 +669,7 @@ class NodeWidget(QWidget):
         connection is allowed and that ``child`` has no parent)."""
         with self._lock:
             self._children.append(child)
+            self._order_nodes = None
         with child._lock:
             child._parent = self
 
@@ -635,6 +678,7 @@ class NodeWidget(QWidget):
         with self._lock:
             if child in self._children:
                 self._children.remove(child)
+                self._order_nodes = None
         with child._lock:
             if child._parent is self:
                 child._parent = None
