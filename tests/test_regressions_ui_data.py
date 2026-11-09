@@ -1139,8 +1139,7 @@ def test_dragging_on_field_name_moves_the_node(qtbot, bt):
     node = bt.AddNode("AllFields", 0, 200)
     bt.view().centerOn(node._item.sceneBoundingRect().center())
     qtbot.wait(10)
-    row = node.field_editor("count").parentWidget()
-    key_edit = row.key_edit
+    key_edit = node.field_key("count")
     assert key_edit.isReadOnly()
     start = viewport_point(bt, node, key_edit)
     assert bt.view().hit_test(start).kind == Hit.NODE

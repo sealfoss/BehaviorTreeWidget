@@ -38,21 +38,20 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QAbstractScrollArea,
     QAbstractSlider,
     QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
-    QListView,
     QPlainTextEdit,
     QSizePolicy,
     QSpinBox,
@@ -881,28 +880,17 @@ class NegationNodeWidget(NodeWidget):
         return f"{NEGATION} - succeeds when its child fails and fails when its child succeeds"
 
 
-class _FieldRow(QWidget):
-    """One row of the Fields list: a read-only key QLineEdit and a value editor."""
-
-    def __init__(self, key: str, editor: QWidget, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName(f"FieldRow_{key}")
-        self.key_edit = QLineEdit(key, self)
-        self.key_edit.setObjectName("FieldKey")
-        self.key_edit.setReadOnly(True)
-        self.key_edit.setToolTip(key)
-        self.key_edit.setCursorPosition(0)
-        self.key_edit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.key_edit.setProperty("btDragArea", True)  # dragging on a field name moves the node
-        self.editor = editor
-        editor.setParent(self)
-        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.key_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 1, 2, 1)
-        layout.setSpacing(4)
-        layout.addWidget(self.key_edit, 1)
-        layout.addWidget(editor, 1)
+def _field_key_box(key: str) -> QLineEdit:
+    """The read-only box showing the name of a field, left of its editor."""
+    box = QLineEdit(key)
+    box.setObjectName("FieldKey")
+    box.setReadOnly(True)
+    box.setToolTip(key)
+    box.setCursorPosition(0)
+    box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    box.setProperty("btDragArea", True)  # dragging on a field name moves the node
+    box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return box
 
 
 class LeafNodeWidget(NodeWidget):
@@ -930,27 +918,52 @@ class LeafNodeWidget(NodeWidget):
 
     # Until __init__ sets them (field hooks can run while a base class is being constructed).
     _fields_frame: QFrame | None = None
-    _fields_view: QListView | None = None
+    _fields_layout: QGridLayout | None = None
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._fields_frame: QFrame | None = self._find_child(QFrame, "FrameFields")
-        self._fields_view: QListView | None = self._find_child(QListView, "Fields")
         self._editors: dict[str, QWidget] = {}
         self._editor_kinds: dict[str, str] = {}
-        self._fields_model: QStandardItemModel | None = None
-        if self._fields_view is not None:
-            view = self._fields_view
-            view.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-            view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            view.setUniformItemSizes(False)
-            view.setSpacing(0)
-            view.setProperty("btDragArea", True)
-            view.viewport().setProperty("btDragArea", True)
+        self._keys: dict[str, QLineEdit] = {}
+        # The field rows: a grid of name boxes (column 0) and editors (column 1) in the widget "Fields".
+        container = self._fields_container()
+        if container is not None:
+            container.setProperty("btDragArea", True)
+            layout = QGridLayout(container)
+            layout.setContentsMargins(2, 1, 2, 1)
+            layout.setHorizontalSpacing(4)
+            layout.setVerticalSpacing(2)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 1)
+            self._fields_layout = layout
         self._rebuild_fields()
+
+    def _fields_container(self) -> QWidget | None:
+        """The widget named ``Fields`` that holds the field rows, or None.
+
+        A custom .ui file written for an earlier version may hold a QListView named ``Fields``
+        (or a container that has a layout already): a plain container takes its place.
+        """
+        fields = self._find_child(QWidget, "Fields")
+        if fields is None or (fields.layout() is None and not isinstance(fields, QAbstractScrollArea)):
+            return fields
+        container = QWidget()
+        container.setObjectName("Fields")
+        container.setSizePolicy(fields.sizePolicy())
+        if isinstance(fields, QAbstractScrollArea):
+            parent = fields.parentWidget()
+            layout = parent.layout() if parent is not None else None
+            if layout is None or layout.replaceWidget(fields, container) is None:
+                container.deleteLater()
+                return None
+            fields.setObjectName("")  # findChild must not find it before it is deleted
+            fields.hide()
+            fields.deleteLater()
+        else:
+            container.setObjectName("FieldRows")
+            fields.layout().addWidget(container)
+        return container
 
     @classmethod
     def HasChildConnections(cls) -> bool:
@@ -989,57 +1002,34 @@ class LeafNodeWidget(NodeWidget):
         self._rebuild_fields()
 
     def _rebuild_fields(self) -> None:
-        if self._fields_view is None or self._fields_frame is None:
+        """Show one row per field: its name and an editor that matches the type of its value."""
+        layout = self._fields_layout
+        if layout is None or self._fields_frame is None:
             return
-        view = self._fields_view
-        old_model = self._fields_model
-        old_editors = list(self._editors.values())
+        for widget in [*self._keys.values(), *self._editors.values()]:
+            if shiboken6.isValid(widget):
+                layout.removeWidget(widget)
+                widget.hide()
+                widget.deleteLater()
+        self._keys.clear()
         self._editors.clear()
         self._editor_kinds.clear()
-        for editor in old_editors:
-            if shiboken6.isValid(editor):
-                editor.deleteLater()
-
         with self._lock:
             items = list(self._fields.items())
-        model = QStandardItemModel(view)
-        view.setModel(model)
-        self._fields_model = model
-        if old_model is not None:
-            old_model.deleteLater()
-
-        rows: list[_FieldRow] = []
-        editors: dict = {}
-        kinds: dict = {}
-        for key, value in items:
-            item = QStandardItem()
-            item.setEditable(False)
-            item.setSelectable(False)
-            model.appendRow(item)
-            row = _FieldRow(str(key), self._create_editor(key, value))
-            editors[key] = row.editor
-            kinds[key] = field_kind(value)
-            rows.append(row)
-
-        total_height = 0
-        max_width = 0
-        for index, row in enumerate(rows):
-            hint = row.sizeHint()
-            model.item(index).setSizeHint(QSize(hint.width(), hint.height()))
-            view.setIndexWidget(model.index(index, 0), row)
-            total_height += hint.height()
-            max_width = max(max_width, hint.width())
-        # Only editors of installed rows are kept (a failure above leaves no dangling editors).
-        self._editors.update(editors)
-        self._editor_kinds.update(kinds)
-
-        if rows:
-            frame = 2 * view.frameWidth()
-            view.setFixedHeight(total_height + frame)
-            view.setMinimumWidth(max_width + frame)
-            self._fields_frame.show()
-        else:
-            self._fields_frame.hide()
+        # Every widget is made before any is installed: a failure leaves no half-built rows.
+        rows = [(key, _field_key_box(str(key)), self._create_editor(key, value), field_kind(value)) for key, value in items]
+        for row, (key, key_box, editor, kind) in enumerate(rows):
+            editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            layout.addWidget(key_box, row, 0)
+            layout.addWidget(editor, row, 1)
+            # Shown now: in a visible node, Qt would show them from the event loop, after the layout
+            # below has measured the rows without them.
+            key_box.show()
+            editor.show()
+            self._keys[key] = key_box
+            self._editors[key] = editor
+            self._editor_kinds[key] = kind
+        self._fields_frame.setVisible(bool(rows))
         self._notify_geometry()
 
     def _create_editor(self, key: str, value: Any) -> QWidget:
@@ -1139,6 +1129,10 @@ class LeafNodeWidget(NodeWidget):
     def field_editor(self, key: str) -> QWidget | None:
         """The editor widget displaying field ``key`` (for tests and customisation)."""
         return self._editors.get(key)
+
+    def field_key(self, key: str) -> QLineEdit | None:
+        """The read-only box showing the name of field ``key`` (for tests and customisation)."""
+        return self._keys.get(key)
 
     # ------------------------------------------------------------------ persistence
     def _to_dict(self) -> dict:

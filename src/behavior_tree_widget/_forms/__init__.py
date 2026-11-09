@@ -27,7 +27,7 @@ FORMS: dict[str, Form] = {
     'FloatEntry.ui': Form('ui_FloatEntry', 'Ui_FloatEntry', 'QWidget', '6c7cd4aa461d66091ffae630224c0cfafde9720b4aee58fd4b3ba88fe412b4e6'),
     'GroupNode.ui': Form('ui_GroupNode', 'Ui_GroupNode', 'QFrame', '329240db5f6d012afd337005c323a51d6a8a9bc6db2e27b3d8f8cac70bd6a6df'),
     'IntegerEntry.ui': Form('ui_IntegerEntry', 'Ui_IntegerEntry', 'QWidget', '787aae6349404298835d74abc3c3267a9cfbbcfa12358093cb16764ac9b8cfef'),
-    'LeafNode.ui': Form('ui_LeafNode', 'Ui_LeafNode', 'QWidget', '493286f70f0dea592790d9dbba20d3c22886e5bb2c161b232b167a979e8f537d'),
+    'LeafNode.ui': Form('ui_LeafNode', 'Ui_LeafNode', 'QWidget', '84b54364ec06b93edeaa3a94c2ecc31e08ffefe9ee8f28c22f96132c04bc7322'),
     'ListEntry.ui': Form('ui_ListEntry', 'Ui_List', 'QWidget', 'ffce1f2920a481cc1527d2f021672eeb64fe28574185b936550c8dd5d38583b6'),
     'NegationNode.ui': Form('ui_NegationNode', 'Ui_NegationNode', 'QWidget', '5844ec975bdb586a966d77e59d45db691b33fbf4e4a3fae8f4c40a95d139bd01'),
     'NotesNode.ui': Form('ui_NotesNode', 'Ui_NotesNode', 'QFrame', '95f8b88c09b9dff87c069a04e62342b1f98fa175c43c7bea2db1a8c4f699b6c1'),

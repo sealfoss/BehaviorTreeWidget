@@ -15,8 +15,8 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QListView,
-    QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QSizePolicy,
+    QVBoxLayout, QWidget)
 
 class Ui_LeafNode(object):
     def setupUi(self, LeafNode):
@@ -77,7 +77,7 @@ class Ui_LeafNode(object):
         self.verticalLayout_4 = QVBoxLayout(self.FrameFields)
         self.verticalLayout_4.setObjectName(u"verticalLayout_4")
         self.verticalLayout_4.setContentsMargins(0, 0, 0, 0)
-        self.Fields = QListView(self.FrameFields)
+        self.Fields = QWidget(self.FrameFields)
         self.Fields.setObjectName(u"Fields")
 
         self.verticalLayout_4.addWidget(self.Fields)

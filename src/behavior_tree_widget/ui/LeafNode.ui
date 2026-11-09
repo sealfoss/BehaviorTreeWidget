@@ -135,7 +135,7 @@
        <number>0</number>
       </property>
       <item>
-       <widget class="QListView" name="Fields"/>
+       <widget class="QWidget" name="Fields"/>
       </item>
      </layout>
     </widget>
