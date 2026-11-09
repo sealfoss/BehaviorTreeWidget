@@ -206,8 +206,12 @@ class ConnectionItem(QGraphicsPathItem):
 
     # ------------------------------------------------------------------ painting
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
-        exposed = option.exposedRect
-        if not exposed.contains(self.boundingRect()) and not QGraphicsPathItem.path(self).intersects(exposed):
+        exposed = option.exposedRect  # an invalid rect: not known, paint everything
+        if (
+            exposed.isValid()
+            and not exposed.contains(self.boundingRect())
+            and not QGraphicsPathItem.path(self).intersects(exposed)
+        ):
             return  # the repainted area only lies within the bounds, not on the line (long lines in a fan)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)

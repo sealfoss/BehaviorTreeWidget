@@ -232,6 +232,7 @@ def test_a_line_is_only_painted_where_the_repainted_area_meets_it(scene):
     curve = item.path()
     on_line = curve.pointAtPercent(0.5)
     assert painted(QRectF(bounds))
+    assert painted(QRectF()), "an option without an exposed rect paints everything"
     assert painted(QRectF(on_line - QPointF(3, 3), on_line + QPointF(3, 3)))
     # A corner of the bounds that the S-shaped line does not pass through.
     corner = QRectF(bounds.topRight() - QPointF(8, 0), bounds.topRight() + QPointF(0, 8))
