@@ -15,7 +15,7 @@ import logging
 import math
 from typing import Any
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QTextCursor, QTextOption
 from PySide6.QtWidgets import QFrame, QLabel, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
 
@@ -196,6 +196,7 @@ class BoxNodeWidget(NodeWidget):
     DEFAULT_SIZE = (220, 120)
     MIN_SIZE = (60, 30)
     MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
+    _handles: list[ResizeHandle] | tuple = ()  # until _create_handles (layout hooks run before it)
 
     def __init__(self, parent: QWidget | None = None):
         self._box_size = QSize(*self.DEFAULT_SIZE)
@@ -287,7 +288,7 @@ class BoxNodeWidget(NodeWidget):
         self._place_handles()
 
     def _place_handles(self) -> None:
-        handles = self.__dict__.get("_handles")
+        handles = self._handles
         if not handles:
             return
         thickness, corner = ResizeHandle.THICKNESS, ResizeHandle.CORNER
@@ -308,7 +309,7 @@ class BoxNodeWidget(NodeWidget):
 
     def resize_handles(self) -> list[ResizeHandle]:
         """The eight resize handles (for tests and customisation)."""
-        return list(self.__dict__.get("_handles") or [])
+        return list(self._handles)
 
     # ------------------------------------------------------------------ persistence
     def _load_box_size(self, data: dict) -> None:
@@ -343,6 +344,7 @@ class NotesNodeWidget(BoxNodeWidget):
     MIN_SIZE = (60, 30)
     MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
     PLACEHOLDER = "Click to write a note"
+    _editor: _NoteEditor | None = None  # until __init__ creates it (layout hooks run before)
 
     textChanged = Signal(str)
 
@@ -396,11 +398,8 @@ class NotesNodeWidget(BoxNodeWidget):
     def _on_text_set(self, runtime: bool = False) -> None:
         text = self.GetText()
         if self._editing and self._editor.toPlainText() != text:
-            blocked = self._editor.blockSignals(True)
-            try:
+            with QSignalBlocker(self._editor):
                 self._editor.setPlainText(text)
-            finally:
-                self._editor.blockSignals(blocked)
         self._refresh_text()
         self.textChanged.emit(text)
         self.changed.emit(runtime)
@@ -446,11 +445,8 @@ class NotesNodeWidget(BoxNodeWidget):
         editor = self._editor
         if not self._editing:
             self._editing = True
-            blocked = editor.blockSignals(True)
-            try:
+            with QSignalBlocker(editor):
                 editor.setPlainText(self.GetText())
-            finally:
-                editor.blockSignals(blocked)
             self._sync_editor()
             editor.show()
         if self._item is not None:
@@ -482,7 +478,7 @@ class NotesNodeWidget(BoxNodeWidget):
 
     def _sync_editor(self) -> None:
         """Lay the editor over the label's text with the label's font."""
-        editor = self.__dict__.get("_editor")
+        editor = self._editor
         if editor is None or not self._editing:
             return
         editor.setGeometry(self._text_label.text_rect())
@@ -505,10 +501,6 @@ class NotesNodeWidget(BoxNodeWidget):
         """
         check_not_cancelled("SetNoteSize")
         self._set_box_size(width, height)
-
-    def _resize_note(self, width: float, height: float) -> tuple[int, int]:
-        """Apply a size (clamped) without reporting a change; returns it (see ``_resize_box``)."""
-        return self._resize_box(width, height)
 
     # ------------------------------------------------------------------ persistence
     def _to_dict(self) -> dict:

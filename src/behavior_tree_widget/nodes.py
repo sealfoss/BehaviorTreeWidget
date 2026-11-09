@@ -32,12 +32,13 @@ import os
 import sys
 import threading
 import uuid
+import warnings
 import weakref
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -61,6 +62,7 @@ from PySide6.QtWidgets import (
 )
 
 from ._common import INT_MAX, INT_MIN
+from ._qt import set_text_quietly
 from ._runctx import check_not_cancelled, current_token
 from ._ui import load_ui
 
@@ -232,12 +234,26 @@ class NodeWidget(QWidget):
         _title: Default title shown in the Title label.
         _fields: Template of the editable fields (leaf nodes only). It is deep copied
             for each node instance.
+
+    A subclass may also assign ``self._title`` / ``self._fields`` in its ``__init__`` before
+    calling ``super().__init__()``: those are the node's initial title and fields. Afterwards
+    use :meth:`SetTitle` and :meth:`SetFields`; assigning the attributes after construction
+    still works but is deprecated.
     """
 
     UI_FILE: str = ""
     TYPE_NAME: str | None = None
     _title: str | None = None
     _fields: dict = {}
+
+    # Defaults of instance attributes that hooks may read before the constructors set them
+    # (a hook overridden by a subclass can run while a base class is being constructed).
+    _node_ready = False  # True once NodeWidget.__init__ has finished
+    _tree_ref = None  # weak reference to the BehaviorTreeWidget (see _tree)
+    _canvas = None  # canvas.TreeView, set while the node is in a view
+    _item = None  # canvas.NodeItem embedding this widget
+    _detached_order: tuple[float, float] | None = None  # orders a node that is not in a view (sub-tree nodes)
+    _subtree_place: tuple[str, ...] | None = None  # ids of the Sub-Tree nodes leading to a sub-tree node, and its own
 
     statusChanged = Signal(str)
     titleChanged = Signal(str)
@@ -262,6 +278,7 @@ class NodeWidget(QWidget):
             template = type(self)._fields
             self._fields = copy.deepcopy(template) if isinstance(template, dict) else {}
         self._field_selections: dict[str, int] = {}
+        self._edited_selections: set[str] = set()  # list fields whose selection was changed after loading
         self._parent: NodeWidget | None = None
         self._children: list[NodeWidget] = []
         self._status = NodeStatus.READY
@@ -312,33 +329,52 @@ class NodeWidget(QWidget):
         self._node_ready = True
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # Assigning _title / _fields (e.g. in a subclass __init__) updates the node's ui.
-        if name in ("_title", "_fields") and self.__dict__.get("_node_ready", False):
+        # Deprecated: assigning _title / _fields after construction updates the node, as
+        # SetTitle / SetFields do. Values assigned before NodeWidget.__init__ are initial values.
+        if name in ("_title", "_fields") and self._node_ready:
+            warnings.warn(
+                f"assigning self.{name} after the node was constructed is deprecated; "
+                f"use {'SetTitle' if name == '_title' else 'SetFields'}() instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             check_not_cancelled(f"assigning self.{name}")
-            runtime = self._is_runtime_change()
             if name == "_title":
-                self._apply_title(value, runtime)
-                return
-            super().__setattr__(name, value)
-            self._call_in_gui_thread(self._on_fields_replaced, runtime)
+                self._apply_title(value)
+            else:
+                self._replace_fields(value)
             return
         super().__setattr__(name, value)
 
     @property
     def _tree(self) -> BehaviorTreeWidget | None:
         """The owning BehaviorTreeWidget (held weakly to avoid reference cycles)."""
-        ref = self.__dict__.get("_tree_ref")
+        ref = self._tree_ref
         return ref() if ref is not None else None
 
     @_tree.setter
     def _tree(self, tree: BehaviorTreeWidget | None) -> None:
-        self.__dict__["_tree_ref"] = weakref.ref(tree) if tree is not None else None
+        self._tree_ref = weakref.ref(tree) if tree is not None else None
 
-    def _apply_title(self, title: Any, runtime: bool) -> None:
-        """Store a new title (None -> default title, others -> str) and update the label."""
+    def _apply_title(self, title: Any, runtime: bool | None = None) -> None:
+        """Store a new title (None -> default title, others -> str) and update the label (any thread).
+
+        ``runtime``: whether this is a run-time change; by default decided by the calling thread
+        and the execution state (see :meth:`_is_runtime_change`).
+        """
         title = self._default_title() if title is None else str(title)
-        super().__setattr__("_title", title)
+        if runtime is None:
+            runtime = self._is_runtime_change()
+        super().__setattr__("_title", title)  # not the deprecated assignment hook
         self._call_in_gui_thread(self._on_title_changed, runtime)
+
+    def _replace_fields(self, fields: Any, runtime: bool | None = None) -> None:
+        """Replace all fields (anything but a dict gives no fields) and rebuild their editors (any thread)."""
+        if runtime is None:
+            runtime = self._is_runtime_change()
+        with self._lock:
+            super().__setattr__("_fields", fields if isinstance(fields, dict) else {})
+        self._call_in_gui_thread(self._on_fields_replaced, runtime)
 
     # ------------------------------------------------------------------ ui helpers
     def _default_title(self) -> str:
@@ -444,7 +480,7 @@ class NodeWidget(QWidget):
         check_not_cancelled("SetTitle")
         title = str(title)
         if title != self._title:
-            self._apply_title(title, self._is_runtime_change())
+            self._apply_title(title)
 
     def _on_title_changed(self, runtime: bool = False) -> None:
         self._refresh_title()
@@ -452,10 +488,22 @@ class NodeWidget(QWidget):
         self.changed.emit(runtime)
         self._notify_geometry()
 
+    def SetFields(self, fields: dict) -> None:
+        """Replace all fields of the node and rebuild their editors (thread-safe).
+
+        ``fields`` maps field names to values, like the class attribute ``_fields``; the node
+        keeps a copy of the dict. The selections of list fields that are still lists are kept.
+
+        Raises:
+            TypeError: ``fields`` is not a dict.
+        """
+        check_not_cancelled("SetFields")
+        if not isinstance(fields, dict):
+            raise TypeError(f"fields must be a dict, not {type(fields).__name__}")
+        self._replace_fields(dict(fields))
+
     def _on_fields_replaced(self, runtime: bool = False) -> None:
         with self._lock:
-            if not isinstance(self._fields, dict):
-                super().__setattr__("_fields", {})
             for key in list(self._field_selections):
                 if not isinstance(self._fields.get(key), list):
                     del self._field_selections[key]
@@ -664,9 +712,7 @@ class NodeWidget(QWidget):
             if not 0 <= index < len(value):
                 raise IndexError(f"index {index} out of range for field {key!r}")
             self._field_selections[key] = index
-            edited = self.__dict__.get("_edited_selections")
-            if edited is not None:
-                edited.add(key)
+            self._edited_selections.add(key)
         self._call_in_gui_thread(self._on_field_set, key, runtime)
 
     # ------------------------------------------------------------------ execution hooks
@@ -737,10 +783,10 @@ class CompositeNodeWidget(NodeWidget):
             return
         old = self._composite_type
         self._composite_type = composite_type
-        if self._title == old:
-            self._title = composite_type  # __setattr__ refreshes the label and emits changed
+        if self.GetTitle() == old:
+            self._apply_title(composite_type)  # a title that names the type follows it
         else:
-            self._on_title_changed(self._is_runtime_change())
+            self._on_title_changed(self._is_runtime_change())  # the type shown after the title changed
 
     def GetMemory(self) -> bool:
         return self._memory
@@ -882,13 +928,16 @@ class LeafNodeWidget(NodeWidget):
     THREAD_WAIT: float = 0.02
     FLOAT_DECIMALS: int = 6
 
+    # Until __init__ sets them (field hooks can run while a base class is being constructed).
+    _fields_frame: QFrame | None = None
+    _fields_view: QListView | None = None
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._fields_frame: QFrame | None = self._find_child(QFrame, "FrameFields")
         self._fields_view: QListView | None = self._find_child(QListView, "Fields")
         self._editors: dict[str, QWidget] = {}
         self._editor_kinds: dict[str, str] = {}
-        self._edited_selections: set = set()  # list fields whose selection was changed after loading
         self._fields_model: QStandardItemModel | None = None
         if self._fields_view is not None:
             view = self._fields_view
@@ -937,8 +986,7 @@ class LeafNodeWidget(NodeWidget):
 
     # ------------------------------------------------------------------ fields ui
     def _refresh_all_fields(self) -> None:
-        if "_editors" in self.__dict__:
-            self._rebuild_fields()
+        self._rebuild_fields()
 
     def _rebuild_fields(self) -> None:
         if self._fields_view is None or self._fields_frame is None:
@@ -1065,8 +1113,7 @@ class LeafNodeWidget(NodeWidget):
         if value is _MISSING or editor is None or self._editor_kinds.get(key) != field_kind(value):
             self._rebuild_fields()
             return
-        editor.blockSignals(True)
-        try:
+        with QSignalBlocker(editor):
             if isinstance(editor, QCheckBox):
                 editor.setChecked(bool(value))
             elif isinstance(editor, QSpinBox):
@@ -1084,15 +1131,10 @@ class LeafNodeWidget(NodeWidget):
                 if items:
                     editor.setCurrentIndex(min(max(selection, 0), len(items) - 1))
             elif isinstance(editor, QLineEdit) and not editor.isReadOnly():
-                if editor.text() != value:
-                    editor.setText(value)
-                    if not editor.hasFocus():
-                        editor.setCursorPosition(0)  # show the start of long text
+                set_text_quietly(editor, value)
             else:
                 editor.setText(_display_repr(value))
                 editor.setCursorPosition(0)
-        finally:
-            editor.blockSignals(False)
 
     def field_editor(self, key: str) -> QWidget | None:
         """The editor widget displaying field ``key`` (for tests and customisation)."""
@@ -1187,9 +1229,8 @@ class UnknownLeafNodeWidget(LeafNodeWidget):
                 if isinstance(selections, dict)
                 else {}
             )
-        # Assigning _fields rebuilds the editors (see NodeWidget.__setattr__). The loader passes
-        # freshly decoded values, so no deep copy (which fails on deeply nested sets).
-        self._fields = dict(saved) if isinstance(saved, dict) else {}
+        # The loader passes freshly decoded values, so no deep copy (which fails on deeply nested sets).
+        self._replace_fields(dict(saved) if isinstance(saved, dict) else {})
 
 
 INTERACTIVE_WIDGET_TYPES = (

@@ -970,6 +970,7 @@ def test_title_and_fields_assigned_before_super_init_are_kept_and_shown(lbt):
     assert node._fields_frame.isVisibleTo(node)
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_title_and_fields_assigned_after_super_init_are_shown(lbt):
     node = lbt.AddNode("PostInitNode", 0, 200)
     assert node.GetTitle() == "Post Title"
@@ -985,6 +986,7 @@ def test_title_and_fields_assigned_after_super_init_are_shown(lbt):
     assert node.height() > empty.height()
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 @pytest.mark.parametrize("type_name", ["PostInitEmptyNode", "PreInitEmptyNode"])
 def test_empty_fields_assigned_in_init_hide_frame_fields(lbt, type_name):
     node = lbt.AddNode(type_name, 0, 200)
@@ -993,6 +995,7 @@ def test_empty_fields_assigned_in_init_hide_frame_fields(lbt, type_name):
     assert node._editors == {}
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_editor_edits_update_instance_fields(lbt):
     node = lbt.AddNode("PostInitNode", 0, 200)
     node.field_editor("ratio").setValue(4.25)
@@ -1003,6 +1006,7 @@ def test_editor_edits_update_instance_fields(lbt):
     assert node.GetFieldSelection("items") == 3
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_path):
     pre = lbt.AddNode("PreInitNode", -200, 200)
     post = lbt.AddNode("PostInitNode", 200, 200)
@@ -1042,6 +1046,7 @@ def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_
     assert read_json(again)["nodes"] == data["nodes"]
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_title_and_fields_assigned_from_worker_thread_are_applied_on_gui_thread(qtbot, lbt, error_records):
     node = lbt.AddNode("NoFields", 0, 200)
     assert not node._fields_frame.isVisibleTo(node)
@@ -1536,6 +1541,7 @@ def test_save_with_uncopyable_field_value(qtbot, bt, dialogs, tmp_path, value_fa
     assert os.path.exists(dialogs.save_path)
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_node_data_that_cannot_be_read_is_reported_not_raised(qtbot, lbt, dialogs, tmp_path, monkeypatch):
     node = lbt.AddNode("PostInitNode", 0, 200)
 

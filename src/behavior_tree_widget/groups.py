@@ -23,6 +23,7 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSizeF, Qt,
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QLineEdit, QWidget
 
+from ._qt import set_text_quietly
 from ._runctx import check_not_cancelled
 from .notes import BoxNodeWidget
 
@@ -102,6 +103,7 @@ class GroupNodeWidget(BoxNodeWidget):
     MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
     NAME_MIN_WIDTH = 60
     NAME_GRAB_ROOM = 28  # part of the title bar right of the name kept free for dragging the group
+    _name_edit: QLineEdit | None = None  # until __init__ finds it (title hooks run before)
 
     colorChanged = Signal(str)  # "#rrggbb"
 
@@ -142,18 +144,11 @@ class GroupNodeWidget(BoxNodeWidget):
 
     def _refresh_title(self) -> None:
         super()._refresh_title()
-        edit = self.__dict__.get("_name_edit")
+        edit = self._name_edit
         if edit is None:
             return
         title = self.GetTitle()
-        if edit.text() != title:
-            blocked = edit.blockSignals(True)
-            try:
-                edit.setText(title)
-                if not edit.hasFocus():
-                    edit.setCursorPosition(0)
-            finally:
-                edit.blockSignals(blocked)
+        if set_text_quietly(edit, title):
             self._fit_name_edit()
         edit.setToolTip(f"Group name: {title}" if title else "Group name")
 
@@ -171,7 +166,7 @@ class GroupNodeWidget(BoxNodeWidget):
             self._refresh_title()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt API)
-        if watched is self.__dict__.get("_name_edit"):
+        if watched is self._name_edit and watched is not None:
             kind = event.type()
             if kind == QEvent.Type.FocusIn:
                 self._name_at_focus = self.GetTitle()
@@ -197,7 +192,7 @@ class GroupNodeWidget(BoxNodeWidget):
 
     def _fit_name_edit(self, *_args) -> None:
         """Size the name editor to its text, leaving part of the title bar free to grab the group."""
-        edit = self.__dict__.get("_name_edit")
+        edit = self._name_edit
         if edit is None:
             return
         text = edit.text() or edit.placeholderText()

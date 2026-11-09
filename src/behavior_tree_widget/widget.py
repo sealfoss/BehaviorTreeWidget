@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import shiboken6
-from PySide6.QtCore import QByteArray, QCoreApplication, QMimeData, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QCoreApplication, QMimeData, QPointF, QRectF, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -534,7 +534,7 @@ class BehaviorTreeWidget(QTabWidget):
             return NotesNodeWidget()
         if type_name == GROUP and self._offers_groups():
             group = GroupNodeWidget()
-            group._title = self._next_group_name()
+            group._apply_title(self._next_group_name(), runtime=False)
             return group
         cls = self._node_types.get(type_name)
         if cls is None:
@@ -1369,11 +1369,8 @@ class BehaviorTreeWidget(QTabWidget):
         """Make the Loop Execution check box show ``TreeConfig.repeat`` (without reacting to it)."""
         box = self._loop_box
         if shiboken6.isValid(box) and box.isChecked() != self._config.repeat:
-            blocked = box.blockSignals(True)
-            try:
+            with QSignalBlocker(box):
                 box.setChecked(self._config.repeat)
-            finally:
-                box.blockSignals(blocked)
 
     def _update_window_title(self) -> None:
         if self._file_path:
@@ -1682,7 +1679,7 @@ class BehaviorTreeWidget(QTabWidget):
         # A copy of a group with a default name gets the next default name (group names are file names).
         for node in pasted:
             if isinstance(node, GroupNodeWidget) and default_group_number(node.GetTitle()) is not None:
-                node._title = self._next_group_name()
+                node._apply_title(self._next_group_name())
         self._view.select_nodes(pasted)
         for problem in problems:
             log.warning("paste: %s", problem)
@@ -1717,7 +1714,7 @@ class BehaviorTreeWidget(QTabWidget):
             for node, position in prepared:
                 node._tree = self
                 relayout(node)  # its size gives its place among its siblings, as in a view
-                node.__dict__["_detached_order"] = (position.x() + node.width() / 2.0, position.y())
+                node._detached_order = (position.x() + node.width() / 2.0, position.y())
             for parent_id, child_id in plan.connections:
                 parent, child = by_id[parent_id], by_id[child_id]
                 with parent._lock:
@@ -1893,7 +1890,7 @@ class BehaviorTreeWidget(QTabWidget):
             if node in view.nodes():
                 view.remove_node(node)
         subtree = SubTreeNodeWidget()
-        subtree._title = name
+        subtree._apply_title(name)
         subtree.SetFile(os.path.basename(path))
         item = view.add_node(subtree, anchor_rect.topLeft())
         subtree._notify_geometry()
@@ -2316,7 +2313,7 @@ class BehaviorTreeWidget(QTabWidget):
             node._load_dict(extra)
             title = item.get("title")
             if isinstance(title, str) and title:
-                node._title = title
+                node._apply_title(title, runtime=False)
             x, y = item.get("x", 0.0), item.get("y", 0.0)
             if not (is_finite_number(x) and is_finite_number(y)):
                 problems.append(f"node {label} has an invalid position")

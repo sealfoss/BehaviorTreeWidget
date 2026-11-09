@@ -2144,6 +2144,7 @@ class _Titled:
         return "from __str__"
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_title_assignment_is_coerced(qtbot, bt, tmp_path):
     root = bt.GetRootNode()
     leaf = bt.AddNode(R3Probe, 0, 220)
@@ -2174,6 +2175,7 @@ def test_title_assignment_is_coerced(qtbot, bt, tmp_path):
     assert saved_node(read_json(out), leaf.GetId())["title"] == "1234"
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 @pytest.mark.parametrize("interrupt", ["Stop", "Reset"])
 def test_cancelled_worker_cannot_assign_title_or_fields(qtbot, bt, gate, interrupt):
     leaf = add_leaf(bt, R3LateAssigner)
@@ -2201,6 +2203,7 @@ def test_cancelled_worker_cannot_assign_title_or_fields(qtbot, bt, gate, interru
     bt.Stop()
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_worker_title_assignment_is_coerced_and_applied_on_the_gui_thread(qtbot, bt, monkeypatch):
     threads = []
     original = NodeWidget._on_title_changed

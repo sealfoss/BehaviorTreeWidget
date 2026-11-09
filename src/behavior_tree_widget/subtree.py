@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QFileDialog, QLineEdit, QToolButton, QWidget
 
 from ._common import TREE_FILE_FILTER
+from ._qt import set_text_quietly
 from ._runctx import check_not_cancelled
 from .nodes import LeafNodeWidget
 from .serialization import tree_file_paths
@@ -54,6 +55,7 @@ class SubTreeNodeWidget(LeafNodeWidget):
     _fields = {FILE_FIELD: ""}
     RUN_IN_THREAD = False
     FILE_FILTER = TREE_FILE_FILTER
+    _file_edit: QLineEdit | None = None  # until __init__ finds it (field hooks run before)
 
     def __init__(self, parent: QWidget | None = None):
         # Folder that a relative file name is relative to, for Sub-Tree nodes inside a sub-tree
@@ -95,7 +97,7 @@ class SubTreeNodeWidget(LeafNodeWidget):
         node is part of (a sub-tree's own file for the nodes of a sub-tree)."""
         if self._base_dir:
             return self._base_dir
-        canvas = self.__dict__.get("_canvas")
+        canvas = self._canvas
         folder = getattr(canvas, "base_folder", None) if canvas is not None else None
         if folder:
             return folder  # a node of a sub-tree shown with Zoom In
@@ -158,22 +160,14 @@ class SubTreeNodeWidget(LeafNodeWidget):
         self._sync_tooltip()
 
     def _sync_file_editor(self) -> None:
-        edit = self.__dict__.get("_file_edit")
+        edit = self._file_edit
         if edit is None:
             return
-        name = self.GetFile()
-        if edit.text() != name:
-            blocked = edit.blockSignals(True)
-            try:
-                edit.setText(name)
-                if not edit.hasFocus():
-                    edit.setCursorPosition(0)
-            finally:
-                edit.blockSignals(blocked)
+        set_text_quietly(edit, self.GetFile())
         self._sync_tooltip()
 
     def _sync_tooltip(self) -> None:
-        edit = self.__dict__.get("_file_edit")
+        edit = self._file_edit
         if edit is None:
             return
         try:
