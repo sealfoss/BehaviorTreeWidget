@@ -271,7 +271,7 @@ repeating `0.8.0` in the install instructions.
 
 ### R7. Tests
 
-**Status: implemented in 0.9.0** (in a separate step after the code changes): the regression round files are folded into the feature files, opt-in performance tests are in `tests/perf` (`pytest -m perf`), and the test node types live in one shared module. pytest-xdist runs the suite in about 35 s on 16 workers instead of 3.5 minutes.
+**Status: implemented in 0.9.0, except the shared node module.** The 150 tests of the regression round files are in the feature files they test (five new ones: `test_execution_commands.py`, `test_execution_loading.py`, `test_canvas_view.py`, `test_widget_lifecycle.py`, `test_demo.py`), with their helpers in `tests/support/`; all 3139 test ids were compared before and after. Opt-in performance tests are in `tests/perf` (`pytest -m perf`). The test node types of `conftest.py` and the demo nodes were not merged: they differ in titles, type names and defaults that tests check. pytest-xdist runs the suite in about 30 s on 16 workers instead of 3.5 minutes.
 
 The suite is thorough (2850 tests) but 5k of its 30k lines live in `test_regressions_round3.py`
 to `test_regressions_round10.py`, named by review round rather than by feature. Proposal: fold
@@ -372,7 +372,7 @@ did five times) a one-table change.
 
 ### M8. Tooling that supports the above
 
-**Status: implemented in 0.9.0** (in a separate step after the code changes): ruff and mypy are configured in `pyproject.toml` (the generated forms excluded), a GitHub Actions workflow runs them and the tests on Windows, and `tools/compile_ui.py --check` and the tests check the generated forms. The wheels are still committed to `dist/`, as this repository does; `tools/build_release.py` builds them.
+**Status: implemented in 0.9.0.** ruff and mypy are configured in `pyproject.toml` (the generated forms excluded; each ignored ruff rule has its reason there). mypy went from 199 errors to none, with three `type: ignore`s for gaps in the Qt and typeshed stubs. The GitHub Actions workflow `.github/workflows/ci.yml` runs ruff, mypy and `tools/compile_ui.py --check` on Ubuntu, the tests on Windows with Python 3.10 and 3.13, and builds the wheel and sdist as an artifact. The wheels are still committed to `dist/`, as this repository does; `tools/build_release.py` builds them.
 
 * Add `[tool.ruff]` (the `noqa` codes in use imply `E`, `N`, `BLE`, `SIM`) and `[tool.mypy]` to
   `pyproject.toml`; the package ships `py.typed` but is not type-checked.
