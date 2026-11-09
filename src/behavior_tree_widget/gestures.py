@@ -33,6 +33,8 @@ from .nodes import CHILDREN, NodeWidget
 from .notes import BOTTOM, LEFT, RIGHT, TOP, BoxNodeWidget, NotesNodeWidget, ResizeHandle
 
 if TYPE_CHECKING:  # pragma: no cover
+    from PySide6.QtGui import QTransform
+
     from .canvas import TreeView
 
 __all__ = [
@@ -187,10 +189,11 @@ class MoveGesture(Gesture):
         self.press_scene_pos = view.mapToScene(pos)
         self.click_selects = click_selects  # a click (no drag) on it selects only it
         members = view.selected_nodes() if view.is_node_selected(node) else [node]
-        members = [member for member in view._with_group_contents(members) if member._item is not None]
-        self.group: list[tuple[NodeWidget, QPointF]] = [(member, QPointF(member._item.pos())) for member in members]
+        shown = [(member, member._item) for member in view._with_group_contents(members)]
+        items = [(member, item) for member, item in shown if item is not None]
+        self.group: list[tuple[NodeWidget, QPointF]] = [(member, QPointF(item.pos())) for member, item in items]
         # Raise the moved nodes above the others, keeping their stacking order and the grabbed one on top.
-        for member in sorted(members, key=lambda member: (member is node, member._item.zValue())):
+        for member, _item in sorted(items, key=lambda pair: (pair[0] is node, pair[1].zValue())):
             view.raise_node(member)
         view.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
 
@@ -252,7 +255,9 @@ class ResizeGesture(Gesture):
         self.edges = handle.edges  # notes.LEFT, TOP, RIGHT, BOTTOM moved by the handle
         self.resized = False
         self.press_scene_pos = view.mapToScene(pos)
-        self.start = QRectF(node._item.pos(), QSizeF(*node.GetBoxSize()))  # the node's scene rectangle
+        item = node._item
+        assert item is not None, "a node being resized is in the view"
+        self.start = QRectF(item.pos(), QSizeF(*node.GetBoxSize()))  # the node's scene rectangle
         self.click_selects = click_selects
         view.raise_node(node)
         view.viewport().setCursor(handle.cursor())
@@ -372,12 +377,14 @@ class ConnectGesture(Gesture):
         self.source: tuple[NodeWidget, str] | None = (node, label_kind)
         self.hover: tuple[NodeWidget, str] | None = None  # the compatible label under the mouse
         self.line: DragLineItem | None = DragLineItem()
-        self._tested = None  # (viewport position, viewport transform) of the last look for a label
+        self._tested: tuple[QPoint, QTransform] | None = None  # (viewport position, transform) of the last look
         view.scene().addItem(self.line)
 
     def begin(self, pos: QPoint) -> None:
         """Show the source label as being placed and draw the line to ``pos`` (the view is active)."""
-        self.view._refresh_label_states(self.source[0])
+        source = self.source
+        assert source is not None, "set by __init__"
+        self.view._refresh_label_states(source[0])
         self.update(pos)
 
     def placing(self) -> set[tuple[NodeWidget, str]]:

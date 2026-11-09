@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 import shiboken6
 from PySide6.QtCore import QPoint, QSignalBlocker, Qt, Signal
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QLabel,
+    QLayout,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -97,19 +98,23 @@ class _ValueDialogBase(QDialog):
 
 def create_value_editor(type_name: str, parent: QWidget | None = None) -> QWidget:
     """Editor used in the Add Entry dialog for a value of ``type_name``."""
+    editor: QWidget
     if type_name == "Integer":
-        editor = QSpinBox(parent)
-        editor.setRange(INT_MIN, INT_MAX)
+        spin_box = QSpinBox(parent)
+        spin_box.setRange(INT_MIN, INT_MAX)
+        editor = spin_box
     elif type_name == "Double":
-        editor = QDoubleSpinBox(parent)
-        editor.setDecimals(FLOAT_DECIMALS)
-        editor.setRange(-sys.float_info.max, sys.float_info.max)
+        double_box = QDoubleSpinBox(parent)
+        double_box.setDecimals(FLOAT_DECIMALS)
+        double_box.setRange(-sys.float_info.max, sys.float_info.max)
+        editor = double_box
     elif type_name == "Bool":
         editor = QCheckBox(parent)
     else:
-        editor = QLineEdit(parent)
+        line_edit = QLineEdit(parent)
         if ENTRY_TYPES[type_name].container:
-            editor.setPlaceholderText(ENTRY_TYPES[type_name].example)
+            line_edit.setPlaceholderText(ENTRY_TYPES[type_name].example)
+        editor = line_edit
     editor.setObjectName("EntryValue")
     return editor
 
@@ -121,7 +126,7 @@ def editor_value(type_name: str, editor: QWidget) -> Any:
         return editor.value()
     if isinstance(editor, QCheckBox):
         return editor.isChecked()
-    text = editor.text()
+    text = cast(QLineEdit, editor).text()  # the editor of every other type (see create_value_editor)
     if ENTRY_TYPES[type_name].container:
         return parse_container_text(type_name, text)
     return text
@@ -222,11 +227,13 @@ class EntryRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._ui)
 
-        self.select_box: QCheckBox = self._ui.findChild(QCheckBox, "Select")
-        self.name_edit: QLineEdit = self._ui.findChild(QLineEdit, "ValueName")
+        select_box = self._ui.findChild(QCheckBox, "Select")
+        name_edit = self._ui.findChild(QLineEdit, "ValueName")
         value_widget = self._ui.findChild(QWidget, spec.value_widget) or self._ui.findChild(QWidget, "Value")
-        if self.select_box is None or self.name_edit is None or value_widget is None:
+        if select_box is None or name_edit is None or value_widget is None:
             raise RuntimeError(f"{spec.ui_file} must contain Select, ValueName and {spec.value_widget} widgets")
+        self.select_box: QCheckBox = select_box
+        self.name_edit: QLineEdit = name_edit
         self.edit_button: QToolButton | None = None  # containers: the Edit... button (see _build_value_editor)
         self.reset_box: QCheckBox = self._reset_check_box()
         self.move_up_button: QToolButton = self._move_button("MoveUp", Qt.ArrowType.UpArrow, MOVE_UP_TOOLTIP)
@@ -244,7 +251,7 @@ class EntryRow(QWidget):
         if box is None:  # a ui file without the Resets check box
             box = QCheckBox("Resets", self._ui)
             box.setObjectName("Reset")
-            self._ui.layout().addWidget(box)
+            self._ui_layout().addWidget(box)
         box.setToolTip(RESET_TOOLTIP)
         return box
 
@@ -258,12 +265,15 @@ class EntryRow(QWidget):
             replacement.setObjectName(widget.objectName())
             replacement.setSizePolicy(widget.sizePolicy())
             replacement.setMinimumSize(widget.minimumSize())
-            widget.parentWidget().layout().replaceWidget(widget, replacement)
+            parent = widget.parentWidget()
+            layout = parent.layout() if parent is not None else None
+            assert layout is not None, "the value editor of an entry .ui file lies in a layout"
+            layout.replaceWidget(widget, replacement)
             widget.hide()  # until it is deleted
             widget.deleteLater()
             widget = replacement
         if type_name == "Object":
-            widget.setReadOnly(True)
+            cast(QLineEdit, widget).setReadOnly(True)  # StringEntry.ui's Value
             widget.setToolTip("Set from code; not editable here")
         elif isinstance(widget, QAbstractSpinBox):
             widget.setKeyboardTracking(True)
@@ -274,7 +284,8 @@ class EntryRow(QWidget):
             self.edit_button.setText("Edit...")
             self.edit_button.setToolTip(f"Edit the {type_name.lower()} as a Python literal")
             frame = self._ui.findChild(QFrame, "FrameValue")
-            container = frame.layout() if frame is not None and frame.layout() is not None else self._ui.layout()
+            frame_layout = frame.layout() if frame is not None else None
+            container = frame_layout if frame_layout is not None else self._ui_layout()
             container.addWidget(self.edit_button)
         return widget
 
@@ -290,12 +301,18 @@ class EntryRow(QWidget):
         widget = self.value_widget
         if self.type_name == "Object":
             return  # read-only: only refresh_value changes it
-        if isinstance(widget, QAbstractSpinBox):
+        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):  # FloatSpinBox included
             widget.valueChanged.connect(self._on_value_edited)
         elif isinstance(widget, QCheckBox):
             widget.toggled.connect(self._on_value_edited)
         elif isinstance(widget, QLineEdit):
             widget.textChanged.connect(self._on_value_edited)
+
+    def _ui_layout(self) -> QLayout:
+        """The layout of the row's ui file (every entry .ui file has one)."""
+        layout = self._ui.layout()
+        assert layout is not None, "an entry .ui file lays out its widgets"
+        return layout
 
     def _move_button(self, name: str, arrow: Qt.ArrowType, tooltip: str) -> QToolButton:
         """The arrow button ``name`` of the ui file (created when the file has none)."""
@@ -304,7 +321,7 @@ class EntryRow(QWidget):
             button = QToolButton(self._ui)
             button.setObjectName(name)
             button.setArrowType(arrow)
-            self._ui.layout().addWidget(button)
+            self._ui_layout().addWidget(button)
         if not button.toolTip():
             button.setToolTip(tooltip)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # a click must not end the editing of a value
@@ -391,9 +408,10 @@ class EntryRow(QWidget):
         with QSignalBlocker(widget):
             if self.type_name == "Object":
                 text = safe_repr(value)
-                widget.setText(text)
-                widget.setCursorPosition(0)
-                widget.setToolTip(text)
+                line_edit = cast(QLineEdit, widget)  # StringEntry.ui's Value
+                line_edit.setText(text)
+                line_edit.setCursorPosition(0)
+                line_edit.setToolTip(text)
             elif isinstance(widget, FloatSpinBox):
                 # Do not reformat the text while the user is typing the same value.
                 if not _same_value(widget.float_value(), value):
@@ -491,13 +509,14 @@ class BlackboardView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._ui)
 
-        self.select_all: QCheckBox = self._ui.findChild(QCheckBox, "SelectAll")
-        self.entry_list: QScrollArea = self._ui.findChild(QScrollArea, "EntryList")
-        self.entry_type: QComboBox = self._ui.findChild(QComboBox, "EntryType")
-        self.add_button: QPushButton = self._ui.findChild(QPushButton, "AddEntry")
-        self.remove_button: QPushButton = self._ui.findChild(QPushButton, "RemoveEntries")
+        # Widgets of the packaged BlackBoardView.ui.
+        self.select_all = cast(QCheckBox, self._ui.findChild(QCheckBox, "SelectAll"))
+        self.entry_list = cast(QScrollArea, self._ui.findChild(QScrollArea, "EntryList"))
+        self.entry_type = cast(QComboBox, self._ui.findChild(QComboBox, "EntryType"))
+        self.add_button = cast(QPushButton, self._ui.findChild(QPushButton, "AddEntry"))
+        self.remove_button = cast(QPushButton, self._ui.findChild(QPushButton, "RemoveEntries"))
 
-        contents = self.entry_list.widget()
+        contents = cast(QWidget, self.entry_list.widget())
         self._rows_layout = QVBoxLayout(contents)
         self._rows_layout.setContentsMargins(2, 2, 2, 2)
         self._rows_layout.setSpacing(2)
@@ -617,7 +636,8 @@ class BlackboardView(QWidget):
 
     def _on_entries_reordered(self) -> None:
         rows = self.rows()
-        current = [self._rows_layout.itemAt(i).widget() for i in range(self._rows_layout.count())]
+        items = [self._rows_layout.itemAt(i) for i in range(self._rows_layout.count())]
+        current = [item.widget() for item in items if item is not None]
         if [widget for widget in current if widget is not None] != rows:
             for index, row in enumerate(rows):
                 self._rows_layout.removeWidget(row)

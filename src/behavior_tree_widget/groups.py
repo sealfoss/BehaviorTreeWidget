@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSizeF, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QFrame, QLineEdit, QWidget
 
 from ._qt import set_text_quietly
@@ -140,7 +140,9 @@ class GroupNodeWidget(BoxNodeWidget):
     # ------------------------------------------------------------------ name
     def name_editor(self) -> QLineEdit:
         """The line edit showing the group name (for tests and customisation)."""
-        return self._name_edit
+        edit = self._name_edit
+        assert edit is not None, "found in __init__"
+        return edit
 
     def _refresh_title(self) -> None:
         super()._refresh_title()
@@ -157,12 +159,13 @@ class GroupNodeWidget(BoxNodeWidget):
             self._apply_title(text, runtime=False)  # typed by the user, also while the tree executes
 
     def _on_name_finished(self) -> None:
-        text = self._name_edit.text().strip()
+        edit = self.name_editor()
+        text = edit.text().strip()
         if not text:
             text = self._name_at_focus.strip() or self._default_title()  # a group always has a name
         if text != self.GetTitle():
             self._apply_title(text, runtime=False)
-        if self._name_edit.text() != text:
+        if edit.text() != text:
             self._refresh_title()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -171,7 +174,7 @@ class GroupNodeWidget(BoxNodeWidget):
             if kind == QEvent.Type.FocusIn:
                 self._name_at_focus = self.GetTitle()
             elif kind == QEvent.Type.KeyPress:
-                key = event.key()
+                key = cast(QKeyEvent, event).key()
                 if key == Qt.Key.Key_Escape:
                     if self._name_at_focus and self._name_at_focus != self.GetTitle():
                         self._apply_title(self._name_at_focus, runtime=False)  # undo the typing
@@ -187,8 +190,9 @@ class GroupNodeWidget(BoxNodeWidget):
         canvas = self._canvas
         if canvas is not None:
             canvas._clear_scene_focus()
-        if self._name_edit.hasFocus():
-            self._name_edit.clearFocus()
+        edit = self.name_editor()
+        if edit.hasFocus():
+            edit.clearFocus()
 
     def _fit_name_edit(self, *_args) -> None:
         """Size the name editor to its text, leaving part of the title bar free to grab the group."""

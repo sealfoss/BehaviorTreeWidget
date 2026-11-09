@@ -123,6 +123,7 @@ class BlackboardFileWriter(QObject):
         Without ``force`` nothing is written when the file already holds the blackboard.
         """
         path = self.path
+        assert path is not None, "written only once the file is known (see is_active)"
         revision = self._store.revision(saved=True)  # read first: later changes are written next time
         if not force and revision == self._written_revision and self.error is None:
             return True  # nothing the file holds changed (e.g. only Object entries changed)

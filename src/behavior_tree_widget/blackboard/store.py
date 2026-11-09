@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins  # set[...] in this class would name its set() method
 import copy
 import logging
 import threading
@@ -521,7 +522,7 @@ class BlackboardStore(QObject):
         return entries, problems
 
     @staticmethod
-    def parse_items(items: Any) -> tuple[list[tuple[str, str, Any]], set[str], list[str]]:
+    def parse_items(items: Any) -> tuple[list[tuple[str, str, Any]], builtins.set[str], list[str]]:
         """Validate :meth:`to_list` data without changing anything.
 
         Returns ``(entries, reset, problems)``: ``(name, type, value)`` of the valid entries,

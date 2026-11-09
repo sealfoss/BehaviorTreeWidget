@@ -81,6 +81,7 @@ class TreeBuilder:
     ) -> py_trees.behaviour.Behaviour:
         """``chain``: the sub-tree files ``node`` lies in; ``leaves`` collects a sub-tree's leaves;
         ``scope``: the ids of the Sub-Tree nodes leading to ``node``; ``titles``: their titles."""
+        behaviour: py_trees.behaviour.Behaviour
         if isinstance(node, CompositeNodeWidget):
             composite = (
                 py_trees.composites.Sequence if node.GetCompositeType() == SEQUENCE else py_trees.composites.Selector
@@ -144,5 +145,5 @@ class TreeBuilder:
             if call is not None and not call.done():
                 inner._worker_future = call  # an interrupted call of the previous run: wait for it
         leaves: list = []
-        inner = self._build(sub_root, (*chain, key), leaves, inner_scope, (*titles, node.GetTitle()))
-        return SubTreeBehaviour(node.GetTitle(), inner, leaves)
+        built = self._build(sub_root, (*chain, key), leaves, inner_scope, (*titles, node.GetTitle()))
+        return SubTreeBehaviour(node.GetTitle(), built, leaves)

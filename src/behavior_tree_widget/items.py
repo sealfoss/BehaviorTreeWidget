@@ -64,7 +64,7 @@ class NodeItem(QGraphicsProxyWidget):
         self.view._on_node_geometry(self.node)
 
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
-        super().paint(painter, option, widget)
+        super().paint(painter, option, widget)  # type: ignore[arg-type]  # Qt passes no widget when painting off screen
         selected = self.view.is_node_selected(self.node)
         note = isinstance(self.node, BoxNodeWidget)  # a note or group has no status, and its own border
         if note and not selected:

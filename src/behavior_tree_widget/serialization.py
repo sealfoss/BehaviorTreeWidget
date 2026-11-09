@@ -25,7 +25,7 @@ import os
 import secrets
 import stat
 import time
-from typing import Any
+from typing import Any, TypeGuard
 
 FORMAT_NAME = "behavior_tree_widget"
 FORMAT_VERSION = 1
@@ -161,7 +161,7 @@ def is_encodable(value: Any) -> bool:
     return True
 
 
-def is_finite_number(value: Any) -> bool:
+def is_finite_number(value: Any) -> TypeGuard[int | float]:
     """True for ints/floats (not bools) with a finite value."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False

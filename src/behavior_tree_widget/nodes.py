@@ -40,7 +40,7 @@ import warnings
 import weakref
 from enum import Enum
 from operator import itemgetter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, Signal
@@ -71,6 +71,11 @@ from ._runctx import check_not_cancelled, current_token
 from ._ui import load_ui
 
 if TYPE_CHECKING:  # pragma: no cover
+    from concurrent.futures import Future
+
+    from ._runctx import RunToken
+    from .canvas import TreeView
+    from .items import NodeItem
     from .widget import BehaviorTreeWidget
 
 log = logging.getLogger("behavior_tree_widget")
@@ -108,7 +113,7 @@ class NodeStatus(str, Enum):
     @classmethod
     def from_py_trees(cls, status) -> NodeStatus:
         """Map a ``py_trees.common.Status`` to a :class:`NodeStatus`."""
-        name = getattr(status, "name", None)
+        name = getattr(status, "name", "")
         return {
             "RUNNING": cls.RUNNING,
             "SUCCESS": cls.SUCCEEDED,
@@ -253,9 +258,9 @@ class NodeWidget(QWidget):
     # Defaults of instance attributes that hooks may read before the constructors set them
     # (a hook overridden by a subclass can run while a base class is being constructed).
     _node_ready = False  # True once NodeWidget.__init__ has finished
-    _tree_ref = None  # weak reference to the BehaviorTreeWidget (see _tree)
-    _canvas = None  # canvas.TreeView, set while the node is in a view
-    _item = None  # canvas.NodeItem embedding this widget
+    _tree_ref: weakref.ReferenceType[BehaviorTreeWidget] | None = None  # the BehaviorTreeWidget (see _tree)
+    _canvas: TreeView | None = None  # the view showing the node, while it is in one
+    _item: NodeItem | None = None  # the scene item embedding this widget, while it is in a view
     _detached_order: tuple[float, float] | None = None  # orders a node that is not in a view (sub-tree nodes)
     _subtree_place: tuple[str, ...] | None = None  # ids of the Sub-Tree nodes leading to a sub-tree node, and its own
 
@@ -292,8 +297,8 @@ class NodeWidget(QWidget):
         self._order_basis: tuple[NodeWidget, ...] = ()
         self._status = NodeStatus.READY
         self._error: str | None = None
-        self._run_token = None  # _runctx.RunToken of the current / last run
-        self._worker_future = None  # Future of the last OnRun call started on a worker thread
+        self._run_token: RunToken | None = None  # of the current / last run
+        self._worker_future: Future | None = None  # of the last OnRun call started on a worker thread
         self._tree_ref = None  # weak reference to the BehaviorTreeWidget (see _tree)
         self._canvas = None  # canvas.TreeView, set when the node is added to a view
         self._item = None  # canvas.NodeItem embedding this widget
@@ -484,7 +489,7 @@ class NodeWidget(QWidget):
 
     def GetTitle(self) -> str:
         with self._lock:
-            return self._title
+            return cast(str, self._title)  # a str once constructed (None only as a class default)
 
     def SetTitle(self, title: str) -> None:
         """Change the title shown on the node (thread-safe)."""
@@ -1085,45 +1090,52 @@ class LeafNodeWidget(NodeWidget):
 
     def _create_editor(self, key: str, value: Any) -> QWidget:
         kind = field_kind(value)
+        editor: QWidget
         if kind == "bool":
-            editor = QCheckBox()
-            editor.setChecked(value)
-            editor.toggled.connect(functools.partial(self._on_editor_value, key))
+            check_box = QCheckBox()
+            check_box.setChecked(value)
+            check_box.toggled.connect(functools.partial(self._on_editor_value, key))
+            editor = check_box
         elif kind == "int":
-            editor = QSpinBox()
-            editor.setRange(INT_MIN, INT_MAX)
-            editor.setValue(min(max(value, INT_MIN), INT_MAX))
-            editor.valueChanged.connect(functools.partial(self._on_editor_value, key))
-            _guard_wheel(editor)
+            spin_box = QSpinBox()
+            spin_box.setRange(INT_MIN, INT_MAX)
+            spin_box.setValue(min(max(value, INT_MIN), INT_MAX))
+            spin_box.valueChanged.connect(functools.partial(self._on_editor_value, key))
+            _guard_wheel(spin_box)
+            editor = spin_box
         elif kind == "float":
-            editor = QDoubleSpinBox()
-            editor.setDecimals(self.FLOAT_DECIMALS)
-            editor.setRange(-sys.float_info.max, sys.float_info.max)
-            editor.setSingleStep(0.1)
-            editor.setValue(value)
-            editor.valueChanged.connect(functools.partial(self._on_editor_value, key))
-            _guard_wheel(editor)
+            double_box = QDoubleSpinBox()
+            double_box.setDecimals(self.FLOAT_DECIMALS)
+            double_box.setRange(-sys.float_info.max, sys.float_info.max)
+            double_box.setSingleStep(0.1)
+            double_box.setValue(value)
+            double_box.valueChanged.connect(functools.partial(self._on_editor_value, key))
+            _guard_wheel(double_box)
+            editor = double_box
         elif kind == "str":
-            editor = QLineEdit()
-            editor.setText(value)
-            editor.setCursorPosition(0)
-            editor.textChanged.connect(functools.partial(self._on_editor_value, key))
+            line_edit = QLineEdit()
+            line_edit.setText(value)
+            line_edit.setCursorPosition(0)
+            line_edit.textChanged.connect(functools.partial(self._on_editor_value, key))
+            editor = line_edit
         elif kind == "list":
-            editor = QComboBox()
-            editor.addItems([_item_text(item) for item in value])
+            combo_box = QComboBox()
+            combo_box.addItems([_item_text(item) for item in value])
             with self._lock:
                 index = self._field_selections.setdefault(key, 0)
             if value:
-                editor.setCurrentIndex(min(max(index, 0), len(value) - 1))
-            editor.currentIndexChanged.connect(functools.partial(self._on_editor_selection, key))
-            _guard_wheel(editor)
+                combo_box.setCurrentIndex(min(max(index, 0), len(value) - 1))
+            combo_box.currentIndexChanged.connect(functools.partial(self._on_editor_selection, key))
+            _guard_wheel(combo_box)
+            editor = combo_box
         else:
-            editor = QLineEdit()
-            editor.setText(_display_repr(value))
-            editor.setCursorPosition(0)
-            editor.setReadOnly(True)
-            editor.setEnabled(False)
-            editor.setToolTip(f"Fields of type {type(value).__name__} cannot be edited")
+            read_only = QLineEdit()
+            read_only.setText(_display_repr(value))
+            read_only.setCursorPosition(0)
+            read_only.setReadOnly(True)
+            read_only.setEnabled(False)
+            read_only.setToolTip(f"Fields of type {type(value).__name__} cannot be edited")
+            editor = read_only
         editor.setObjectName(f"Field_{key}")
         if kind != "other":
             editor.setToolTip(str(key))
@@ -1173,7 +1185,7 @@ class LeafNodeWidget(NodeWidget):
                     editor.setCurrentIndex(min(max(selection, 0), len(items) - 1))
             elif isinstance(editor, QLineEdit) and not editor.isReadOnly():
                 set_text_quietly(editor, value)
-            else:
+            elif isinstance(editor, QLineEdit):  # the read-only editor of a value of another type
                 editor.setText(_display_repr(value))
                 editor.setCursorPosition(0)
 

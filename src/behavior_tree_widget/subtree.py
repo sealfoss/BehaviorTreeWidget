@@ -143,7 +143,9 @@ class SubTreeNodeWidget(LeafNodeWidget):
 
     def file_editor(self) -> QLineEdit:
         """The line edit showing the file name (for tests and customisation)."""
-        return self._file_edit
+        edit = self._file_edit
+        assert edit is not None, "found in __init__"
+        return edit
 
     def browse_button(self) -> QToolButton:
         """The ``...`` button choosing the file (for tests and customisation)."""

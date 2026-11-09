@@ -56,7 +56,7 @@ def _read_ui(name_or_path: str) -> bytes:
         with open(name_or_path, "rb") as stream:
             data = stream.read()
     else:
-        resource = resources.files(__package__).joinpath("ui", name_or_path)
+        resource = resources.files(__package__).joinpath("ui").joinpath(name_or_path)
         if not resource.is_file():
             raise FileNotFoundError(f"No packaged ui file named {name_or_path!r}")
         data = resource.read_bytes()

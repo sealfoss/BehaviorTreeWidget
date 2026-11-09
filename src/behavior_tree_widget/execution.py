@@ -224,7 +224,7 @@ class TreeExecutor(QObject):
         self._tick_waited = 0.0  # seconds the tick in progress spent waiting for worker-thread calls
         self._queue = CommandQueue()
         self._shut_down = False
-        self._blackboard_snapshot = None
+        self._blackboard_snapshot: list[tuple[str, str, Any]] | None = None  # see restore_blackboard
         # Incremented whenever a run starts, is stopped or reset (or the tree replaced): a
         # command queued from a worker thread is dropped if the generation changed meanwhile.
         self._generation = 0
@@ -704,6 +704,7 @@ class TreeExecutor(QObject):
         self._tick_waited = 0.0
         try:
             tree = self._tree
+            assert tree is not None, "_tick ticks only a built tree"
             config = self._host.config()
             root = tree.root
             if root.status in (Status.SUCCESS, Status.FAILURE):

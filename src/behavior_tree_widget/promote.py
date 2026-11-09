@@ -9,7 +9,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPointF, QRectF
 
@@ -103,7 +103,7 @@ def plan_promotion(view: TreeView, group: GroupNodeWidget) -> Promotion:
                 "move them into the group or disconnect them"
             )
     tops = sorted((node for node in nodes if node.GetParent() not in inside), key=lambda node: node._order_key())
-    parents = list(dict.fromkeys(node.GetParent() for node in tops if node.GetParent() is not None))
+    parents = list(dict.fromkeys(parent for parent in (node.GetParent() for node in tops) if parent is not None))
     if len(parents) > 1:
         raise ValueError(
             "the nodes in the group are connected to more than one node outside it "
@@ -125,10 +125,12 @@ def plan_promotion(view: TreeView, group: GroupNodeWidget) -> Promotion:
     return Promotion(group, group.GetTitle().strip(), members, nodes, tops, parent, root_children)
 
 
-def _united(rects: Iterable[QRectF]) -> QRectF:
+def _united(rects: Iterable[QRectF | None]) -> QRectF:
+    """The rectangle around ``rects`` (None: a node that is not in a view, which has no rectangle)."""
     area = QRectF()
     for rect in rects:
-        area = area.united(rect)
+        if rect is not None:
+            area = area.united(rect)
     return area
 
 
@@ -152,7 +154,7 @@ def _subtree_document(
     root_width = probe.width()
     probe.deleteLater()
     root_id = uuid.uuid4().hex
-    root_item = {
+    root_item: dict[str, Any] = {
         "id": root_id,
         "type": ROOT,
         "title": ROOT,
@@ -209,6 +211,7 @@ def replace_group(view: TreeView, promotion: Promotion, file_name: str) -> SubTr
     """
     anchor = promotion.root_children[0] if promotion.root_children else promotion.tops[0]
     anchor_rect = anchor.scene_rect()
+    assert anchor_rect is not None, "the group's nodes are in the view"
     for node in [promotion.group, *promotion.members]:
         if node in view.nodes():
             view.remove_node(node)
