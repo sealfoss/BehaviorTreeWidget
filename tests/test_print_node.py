@@ -8,7 +8,6 @@ log level, DEBUG (3) by default.
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 from PySide6.QtCore import Qt

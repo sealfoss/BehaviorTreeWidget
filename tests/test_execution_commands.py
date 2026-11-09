@@ -43,10 +43,15 @@ from support.round3 import (
     timer_thread_warnings,
 )
 from support.round4 import GatedWorker, Quick, Writer, build
-from support.round5 import Emitter, Endless, Quick as R5Quick
-from support.round6 import Endless as R6Endless, Quick as R6Quick, StopIssuer, in_thread
-from support.round7 import Endless as R7Endless, StopIssuer as R7StopIssuer
-from support.round8 import TYPES, Commander, Endless as R8Endless, assert_no_more_runs, chained
+from support.round5 import Emitter, Endless
+from support.round5 import Quick as R5Quick
+from support.round6 import Endless as R6Endless
+from support.round6 import Quick as R6Quick
+from support.round6 import StopIssuer, in_thread
+from support.round7 import Endless as R7Endless
+from support.round7 import StopIssuer as R7StopIssuer
+from support.round8 import TYPES, Commander, assert_no_more_runs, chained
+from support.round8 import Endless as R8Endless
 from support.round9 import Quick as R9Quick
 
 

@@ -36,7 +36,6 @@ from behavior_tree_widget.serialization import FORMAT_NAME, FORMAT_VERSION
 
 from conftest import SlowCancelable, fast_config, viewport_point
 
-
 READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
 
 

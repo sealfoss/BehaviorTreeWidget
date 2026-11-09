@@ -16,8 +16,7 @@ import threading
 import pytest
 from PySide6.QtWidgets import QLineEdit, QSpinBox
 
-from behavior_tree_widget import NodeStatus, UdpMessageNodeWidget
-from behavior_tree_widget import network_nodes
+from behavior_tree_widget import NodeStatus, UdpMessageNodeWidget, network_nodes
 from behavior_tree_widget.network_nodes import UDP_MESSAGE, resolve_udp_address
 
 from conftest import fast_config, run_until_idle
@@ -70,7 +69,7 @@ def no_datagram(sock: socket.socket, wait: float = 0.3) -> bool:
     sock.settimeout(wait)
     try:
         sock.recvfrom(65535)
-    except socket.timeout:
+    except TimeoutError:
         return True
     return False
 

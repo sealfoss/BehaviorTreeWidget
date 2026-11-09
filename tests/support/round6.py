@@ -11,7 +11,6 @@ import pytest
 from behavior_tree_widget import LeafNodeWidget, Status
 from behavior_tree_widget.blackboard import FloatSpinBox
 
-
 DBL_MAX = sys.float_info.max
 
 

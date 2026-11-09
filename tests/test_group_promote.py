@@ -20,7 +20,8 @@ from behavior_tree_widget.groups import GROUP
 from behavior_tree_widget.serialization import FORMAT_NAME
 
 from conftest import fast_config, run_until_idle
-from support.round10 import Mark as R10Mark, legacy_tree
+from support.round10 import Mark as R10Mark
+from support.round10 import legacy_tree
 
 
 class Mark(LeafNodeWidget):

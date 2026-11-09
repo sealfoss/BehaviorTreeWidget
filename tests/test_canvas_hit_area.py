@@ -7,8 +7,8 @@ import math
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QPainterPathStroker
 from PySide6.QtTest import QTest
-from PySide6.QtGui import QPainterPath, QPainterPathStroker
 from PySide6.QtWidgets import QGraphicsPathItem
 
 from behavior_tree_widget.canvas import LINE_HIT_WIDTH, LINE_WIDTH, ConnectionItem, Hit

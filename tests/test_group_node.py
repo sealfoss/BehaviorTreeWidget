@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QSize, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from behavior_tree_widget import BehaviorTreeWidget, GroupNodeWidget, LeafNodeWidget, NotesNodeWidget
+from behavior_tree_widget import BehaviorTreeWidget, GroupNodeWidget, LeafNodeWidget
 from behavior_tree_widget.canvas import GROUP_Z_BASE, NOTE_Z_BASE, Hit
 from behavior_tree_widget.groups import DEFAULT_GROUP_COLOR, GROUP, GROUP_COLORS, default_group_name
 from behavior_tree_widget.notes import BOTTOM, LEFT, RIGHT, TOP
@@ -98,7 +98,7 @@ def test_choosing_group_in_the_menu_adds_one_at_the_click(bt, dialogs):
     assert bt.view().hit_test(point).kind == Hit.EMPTY
     dialogs.menu_handler = lambda menu: action(menu, "Add_Group").trigger()
     context_menu(bt, dialogs, point)
-    group = [node for node in bt.GetNodes() if isinstance(node, GroupNodeWidget)][0]
+    group = next(node for node in bt.GetNodes() if isinstance(node, GroupNodeWidget))
     assert group._item.pos() == bt.view().mapToScene(point)
     assert group.GetTitle() == "group_001"
     assert group.GetGroupSize() == GroupNodeWidget.DEFAULT_SIZE

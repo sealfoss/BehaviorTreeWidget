@@ -166,7 +166,7 @@ def _differences(left, right, path="") -> list[str]:
                 found += _differences(left[key], right[key], f"{path}/{key}")
         return found
     if isinstance(left, list) and isinstance(right, list) and len(left) == len(right):
-        return [d for index, (a, b) in enumerate(zip(left, right)) for d in _differences(a, b, f"{path}[{index}]")]
+        return [d for index, (a, b) in enumerate(zip(left, right, strict=True)) for d in _differences(a, b, f"{path}[{index}]")]
     return [] if left == right else [f"{path}: form {left!r} != QUiLoader {right!r}"]
 
 
@@ -287,7 +287,7 @@ def test_one_quiloader_serves_every_load(qapp, monkeypatch, tmp_path):
 def test_a_failed_load_names_the_file_and_the_shared_loader_keeps_working(qapp, tmp_path):
     path = tmp_path / "Broken.ui"
     path.write_bytes(b"<ui version='4.0'><widget class='NoSuchWidgetClass' name='X'/></ui>")
-    with pytest.raises(RuntimeError, match="Broken.ui"):
+    with pytest.raises(RuntimeError, match=r"Broken\.ui"):
         load_ui(str(path))
     good = tmp_path / "LeafNode.ui"
     good.write_bytes(_read_ui("LeafNode.ui"))

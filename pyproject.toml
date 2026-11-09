@@ -57,3 +57,20 @@ ignore = [
     "RUF012",  # class-level _fields / _title templates are the documented way to declare node fields
     "SIM105",  # try / except / pass with a comment saying why reads better than contextlib.suppress here
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["behavior_tree_widget"]
+known-local-folder = ["conftest", "support"]  # the test suite's own modules
+
+[tool.ruff.lint.pyflakes]
+# The support modules of the test suite define pytest fixtures that test modules import by name.
+allowed-unused-imports = ["support"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "E501",    # long test names, ids and expected texts
+    "F811",    # a test's argument named like the fixture it imports from a support module
+    "RUF005",  # [*a, b] vs a + [b]: either reads fine in test data
+    "RUF059",  # unpacking a value to check its shape names the parts the test ignores
+    "SIM115",  # helpers that open a file briefly to read test data
+]

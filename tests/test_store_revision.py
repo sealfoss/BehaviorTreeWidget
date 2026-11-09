@@ -83,9 +83,8 @@ def test_batch_emits_once_at_the_end_of_the_outermost_batch(store):
 def test_batch_ends_when_the_block_raises(store):
     finished = []
     store.batchFinished.connect(lambda: finished.append(True))
-    with pytest.raises(ValueError):
-        with store.batch():
-            raise ValueError("boom")
+    with pytest.raises(ValueError), store.batch():
+        raise ValueError("boom")
     assert finished == [True]
     assert not store.in_batch()
 

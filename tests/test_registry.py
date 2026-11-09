@@ -65,8 +65,8 @@ def test_the_kinds_table_defines_the_name_sets():
     assert names[:3] == ["Sequence", "Selector", "Negation"]
     assert names[-2:] == ["Notes", "Group"]
     assert set(BUILTIN_LEAF_TYPES) == {kind.name for kind in BUILTIN_KINDS if kind.leaf_class is not None}
-    assert YIELDING_TYPE_NAMES == {"UDP Message", "Print Message", "Sub-Tree", "Notes", "Group"}
-    assert RESERVED_TYPE_NAMES == {"Root", *names} - YIELDING_TYPE_NAMES
+    assert {"UDP Message", "Print Message", "Sub-Tree", "Notes", "Group"} == YIELDING_TYPE_NAMES
+    assert {"Root", *names} - YIELDING_TYPE_NAMES == RESERVED_TYPE_NAMES
 
 
 def test_type_names_and_menu_follow_the_kinds_and_the_registered_types():

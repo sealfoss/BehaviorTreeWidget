@@ -34,6 +34,7 @@ from PySide6.QtWidgets import QLabel
 from behavior_tree_widget import BehaviorTreeWidget, ExecutionCancelled, LeafNodeWidget, NodeStatus
 from behavior_tree_widget.execution import LeafBehaviour
 from behavior_tree_widget.serialization import blackboard_document, tree_file_paths, write_json_atomic
+
 from conftest import Succeed, assert_blackboard_in_file, fast_config, run_until_idle
 
 READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
@@ -638,7 +639,7 @@ def test_worker_of_previous_tree_cannot_touch_the_loaded_tree(qtbot, bt, gate, t
 
 # ============================================================================ THREAD_WAIT
 def test_thread_wait_default_value():
-    assert LeafNodeWidget.THREAD_WAIT == pytest.approx(0.02)
+    assert pytest.approx(0.02) == LeafNodeWidget.THREAD_WAIT
 
 
 def test_quick_threaded_leaf_completes_within_the_tick_that_starts_it(qtbot, bt):
@@ -1165,7 +1166,7 @@ def test_structure_edits_raise_while_executing_and_run_completes(qtbot, bt, paus
         "RemoveChild": lambda: root.RemoveChild(leaf),
     }
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        for name, attempt in attempts.items():
+        for attempt in attempts.values():
             with pytest.raises(RuntimeError):
                 attempt()
         instance = Succeed()

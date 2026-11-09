@@ -14,7 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsView, QStyleOptionGraphicsItem
 
 from behavior_tree_widget import NodeStatus
-from behavior_tree_widget.canvas import SELECTION_COLOR, ConnectionItem
+from behavior_tree_widget.canvas import SELECTION_COLOR
 from behavior_tree_widget.nodes import CHILDREN, STATUS_COLORS
 
 from conftest import drag, label_point, viewport_point
@@ -54,7 +54,7 @@ def assert_no_stale_pixels(qtbot, view) -> None:
 
 
 def close_to(color: QColor, expected: QColor, tolerance: int = 40) -> bool:
-    return all(abs(a - b) <= tolerance for a, b in zip(color.getRgb()[:3], expected.getRgb()[:3]))
+    return all(abs(a - b) <= tolerance for a, b in zip(color.getRgb()[:3], expected.getRgb()[:3], strict=True))
 
 
 def shows_color(view, scene_rect: QRectF, color: QColor, tolerance: int = 40) -> bool:

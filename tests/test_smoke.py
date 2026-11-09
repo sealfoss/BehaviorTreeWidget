@@ -2,7 +2,7 @@
 
 from behavior_tree_widget.nodes import CHILDREN, PARENT, ConnectionState
 
-from conftest import drag, label_point, run_until_idle, fast_config
+from conftest import drag, fast_config, label_point, run_until_idle
 
 
 def test_build_connect_and_run(qtbot, bt):

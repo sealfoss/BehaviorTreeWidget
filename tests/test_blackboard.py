@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import threading
 
 import py_trees
@@ -1154,7 +1153,7 @@ def test_node_writes_from_worker_thread_during_execution(qtbot, bt, view, tmp_pa
         run_until_idle(qtbot, bt)
         assert bt.GetEntry("runs") == run
         qtbot.waitUntil(
-            lambda: view.row("created_by_node") is not None
+            lambda run=run: view.row("created_by_node") is not None
             and view.row("created_by_node").value_widget.text() == f"run {run}"
             and view.row("runs").value_widget.value() == run,
             timeout=5000,

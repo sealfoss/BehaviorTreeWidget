@@ -25,8 +25,7 @@ import time
 import pytest
 from PySide6.QtWidgets import QApplication, QComboBox
 
-from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, LogLevel, Status, TreeConfig, flush_logs
-from behavior_tree_widget import tree_log
+from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, LogLevel, Status, TreeConfig, flush_logs, tree_log
 from behavior_tree_widget import widget as widget_module
 from behavior_tree_widget.serialization import FORMAT_NAME
 from behavior_tree_widget.subtree import SUB_TREE
@@ -230,7 +229,7 @@ def test_log_file_is_named_with_the_application_start(tree, logs):
 
 
 def test_without_a_log_folder_the_file_is_in_the_folder_the_application_started_from(monkeypatch, make_widget, tmp_path):
-    assert tree_log.START_FOLDER == os.getcwd()
+    assert os.getcwd() == tree_log.START_FOLDER
     start_folder = tmp_path / "started_here"
     monkeypatch.setattr(BehaviorTreeWidget, "LOG_FOLDER", None)
     monkeypatch.setattr(widget_module, "START_FOLDER", str(start_folder))  # never write into the repository

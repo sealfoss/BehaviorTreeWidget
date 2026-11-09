@@ -50,7 +50,8 @@ from support.round3 import (
     write_tree,
 )
 from support.round4 import Quick, build
-from support.round5 import Endless, Quick as R5Quick
+from support.round5 import Endless
+from support.round5 import Quick as R5Quick
 
 
 # ============================================================================ positions

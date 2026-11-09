@@ -45,6 +45,8 @@ from behavior_tree_widget import (
     UnknownLeafNodeWidget,
     register_node_type,
     registered_node_types,
+)
+from behavior_tree_widget import (
     widget as widget_module,
 )
 from behavior_tree_widget.blackboard import BlackboardView
@@ -991,7 +993,7 @@ def test_unknown_node_type_creates_placeholder_and_warns(make_widget, dialogs, t
 
     assert widget.IsTreeLoaded()
     assert "warning" in dialogs.kinds()
-    warning_args = [args for kind, args in dialogs.shown if kind == "warning"][0]
+    warning_args = next(args for kind, args in dialogs.shown if kind == "warning")
     assert any("Mystery" in str(arg) for arg in warning_args)
     node = node_by_id(widget, "m")
     assert isinstance(node, UnknownLeafNodeWidget)

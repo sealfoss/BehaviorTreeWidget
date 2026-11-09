@@ -15,7 +15,7 @@ from conftest import Succeed, drag, viewport_point
 
 def full_order(parent):
     """The order GetChildren must give: left to right by centre, then top; ties in connection order."""
-    return sorted(list(parent._children), key=lambda node: node._order_key())
+    return sorted(parent._children, key=lambda node: node._order_key())
 
 
 def badges(view, parent) -> list[int]:
@@ -127,7 +127,7 @@ def test_nodes_outside_a_view_are_ordered_by_their_saved_place(qapp):
     parent = CompositeNodeWidget()
     children = [Succeed(), Succeed(), Succeed()]
     try:
-        for child, x in zip(children, (300.0, -50.0, 120.0)):
+        for child, x in zip(children, (300.0, -50.0, 120.0), strict=True):
             child.__dict__["_detached_order"] = (x, 0.0)
             parent._link(child)
         assert parent.GetChildren() == [children[1], children[2], children[0]]

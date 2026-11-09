@@ -376,7 +376,7 @@ class EventCounter(QObject):
         self.types = set(types)
         self.count = 0
 
-    def eventFilter(self, watched, event):  # noqa: N802 (Qt API)
+    def eventFilter(self, watched, event):
         if event.type() in self.types:
             self.count += 1
         return False
@@ -1680,7 +1680,7 @@ def test_dispose_clears_rows_and_later_writes_raise(qtbot, bt):
         "rename": lambda: store.rename("a", "z"),
         "replace": lambda: store.replace("a", "String", "s"),
     }
-    for label, write in writes.items():
+    for write in writes.values():
         with pytest.raises(RuntimeError):
             write()
     with pytest.raises(KeyError):
@@ -2381,7 +2381,6 @@ def test_widget_deleted_right_after_show_and_load_raises_nothing(qtbot, view_fil
 
 # ============================================================================ Widget: close / destroy
 def test_close_top_level_widget_stops_but_does_not_shut_down(qtbot, bt, dialogs, executing):
-    ns = executing
     dialogs.question_answer = QMessageBox.StandardButton.Discard
     assert bt.close()
     assert not bt.IsExecuting()

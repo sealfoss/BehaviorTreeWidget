@@ -16,16 +16,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if os.path.isdir("C:/Windows/Fonts"):
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
 
-import pytest  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox  # noqa: E402
+import pytest
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
-from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status  # noqa: E402
-from behavior_tree_widget.blackboard import BlackboardView  # noqa: E402
-from behavior_tree_widget.canvas import TreeView  # noqa: E402
-from behavior_tree_widget.demo import DEMO_NODE_TYPES  # noqa: E402
-from behavior_tree_widget.serialization import blackboard_path_for, tree_file_paths  # noqa: E402
+from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status
+from behavior_tree_widget.blackboard import BlackboardView
+from behavior_tree_widget.canvas import TreeView
+from behavior_tree_widget.demo import DEMO_NODE_TYPES
+from behavior_tree_widget.serialization import blackboard_path_for, tree_file_paths
 
 
 # ============================================================================ test node types

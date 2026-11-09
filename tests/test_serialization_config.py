@@ -33,7 +33,8 @@ import pytest
 from pytestqt.exceptions import capture_exceptions
 
 import behavior_tree_widget
-from behavior_tree_widget import UnknownLeafNodeWidget, serialization, serialization as serialization_module
+from behavior_tree_widget import UnknownLeafNodeWidget, serialization
+from behavior_tree_widget import serialization as serialization_module
 from behavior_tree_widget.config import ConfigureDialog, TreeConfig
 from behavior_tree_widget.serialization import (
     FORMAT_NAME,
@@ -67,12 +68,15 @@ from support.round3 import (
     saved_node,
     warning_texts,
     warnings_logged,
+)
+from support.round3 import (
     write_tree as r3_write_tree,
 )
 from support.round4 import Quick, build
 from support.round6 import _ENCODE_SCRIPT
 from support.round7 import Holder, _nested
-from support.round8 import Holder as R8Holder, _json_window, _nested_frozenset
+from support.round8 import Holder as R8Holder
+from support.round8 import _json_window, _nested_frozenset
 
 
 # ============================================================================ helpers
@@ -159,7 +163,7 @@ ROUND_TRIP_VALUES = [
     pytest.param(set(), id="empty-set"),
     pytest.param({3, 1, 2}, id="int-set"),
     pytest.param({"b", "a", "c"}, id="str-set"),
-    pytest.param({1, "a", None, (1, 2), 2.5, True}, id="mixed-set"),
+    pytest.param({1, "a", None, (1, 2), 2.5}, id="mixed-set"),
     pytest.param({(1, (2, 3)), ("x",)}, id="set-of-nested-tuples"),
     pytest.param([{1, 2}, ({3},)], id="sets-inside-containers"),
     pytest.param({1: "a", 2: "b"}, id="int-key-dict"),
@@ -236,7 +240,8 @@ def test_set_encoding_is_deterministic():
     first = encode_value({"b", "a", "c", 10, 2})
     second = encode_value({2, 10, "c", "a", "b"})
     assert first == second
-    assert encode_value(set(range(30))) == encode_value(set(reversed(range(30))))
+    # Built in another order on purpose: the encoding must not depend on the order of the set.
+    assert encode_value(set(range(30))) == encode_value(set(reversed(range(30))))  # noqa: C414
 
 
 def test_dict_order_is_preserved():
@@ -610,7 +615,7 @@ def test_read_tree_file_missing_file(tmp_path):
 def test_read_tree_file_directory(tmp_path):
     folder = tmp_path / "folder.json"
     folder.mkdir()
-    with pytest.raises(TreeFileError, match="folder.json"):
+    with pytest.raises(TreeFileError, match=r"folder\.json"):
         read_tree_file(str(folder))
 
 
@@ -631,7 +636,7 @@ def test_read_tree_file_invalid_json(tmp_path, text):
 def test_read_tree_file_invalid_utf8(tmp_path):
     path = tmp_path / "binary.json"
     path.write_bytes(b'{"format": "\xff\xfe\xfa"}')
-    with pytest.raises(TreeFileError, match="binary.json"):
+    with pytest.raises(TreeFileError, match=r"binary\.json"):
         read_tree_file(str(path))
 
 
@@ -1230,7 +1235,7 @@ def test_write_json_atomic_never_overwrites_a_file_held_open(tmp_path, monkeypat
     target = tmp_path / "held.json"
     original = '{"old": true, "padding": "' + "x" * 200 + '"}\n'
     target.write_text(original, encoding="utf-8")
-    handle = open(target, encoding="utf-8")  # noqa: SIM115 - another program keeps the file open
+    handle = open(target, encoding="utf-8")
     try:
         if os.name == "nt":
             with pytest.raises(PermissionError) as info:
@@ -1294,7 +1299,7 @@ def test_unknown_placeholder_keeps_selections_of_raw_fields(make_widget, tmp_pat
     widget = make_widget(node_types=[])
     assert widget.LoadTree(str(path))
     widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
-    node = [n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
+    node = next(n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m")
     assert node["fields"]["choice"] == {"__set__": [[1, 2]]}
     assert node["field_selections"] == {"choice": 1, "plain": 1}
 
@@ -1304,7 +1309,7 @@ def test_non_str_field_keys_are_skipped_when_saving(widget, dialogs, tmp_path, c
     quick.SetField("ok", 5)
     path = str(tmp_path / "keys_BT.json")
     assert widget.SaveTree(path)
-    saved = [n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["type"] == "R4Quick"][0]
+    saved = next(n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["type"] == "R4Quick")
     assert saved["fields"] == {"ok": 5}
     assert any("(1, 2)" in record.getMessage() for record in caplog.records)
 
@@ -1352,7 +1357,7 @@ def test_unknown_placeholder_keeps_selections_verbatim(make_widget, tmp_path):
     widget = make_widget(node_types=[])
     assert widget.LoadTree(str(path))
     assert widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
-    node = [n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
+    node = next(n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m")
     assert node["field_selections"] == selections
 
 

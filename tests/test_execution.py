@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QLabel
 
 from behavior_tree_widget import ExecutionCancelled, LeafNodeWidget, NodeStatus, UnknownLeafNodeWidget
 from behavior_tree_widget.execution import result_to_status, run_in_daemon_thread
+
 from conftest import (
     Raise,
     Recorder,
@@ -308,7 +309,7 @@ class LateWriter(LeafNodeWidget):
         state.gate.wait(10)
         try:
             tree.SetEntry(42, "late")
-        except BaseException as error:  # noqa: BLE001 - reported to the test
+        except BaseException as error:
             state.errors.append(error)
             raise
         finally:

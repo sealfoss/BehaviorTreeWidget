@@ -65,7 +65,7 @@ def returned(node) -> None:
 
 
 def test_the_default_budget():
-    assert TreeExecutor.TICK_WAIT_BUDGET == pytest.approx(0.1)
+    assert pytest.approx(0.1) == TreeExecutor.TICK_WAIT_BUDGET
 
 
 def test_quick_calls_finish_within_the_tick_that_starts_them(tree):

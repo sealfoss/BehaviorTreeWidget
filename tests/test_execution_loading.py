@@ -7,7 +7,7 @@ import logging
 import os
 
 import pytest
-from PySide6.QtCore import QPointF, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.exceptions import capture_exceptions
 
@@ -39,7 +39,8 @@ from support.round3 import (
 )
 from support.round4 import GatedWorker, build
 from support.round7 import Endless, Quick, other_tree_file
-from support.round8 import RestartOnce, assert_no_more_runs, chained, other_tree_file as r8_other_tree_file
+from support.round8 import RestartOnce, assert_no_more_runs, chained
+from support.round8 import other_tree_file as r8_other_tree_file
 
 
 # ============================================================================ LoadTree / NewTree while the executor is busy
@@ -295,7 +296,7 @@ def test_failed_install_keeps_object_entries_identical(qtbot, bt, tmp_path, monk
         original_add = view.add_node
         failed = []
 
-        def fail_first(node, pos=QPointF(0, 0)):
+        def fail_first(node, pos=None):
             if not failed:
                 failed.append(node)
                 raise RuntimeError("simulated install failure")
@@ -338,7 +339,7 @@ def test_new_tree_install_failure(qtbot, bt, dialogs, tmp_path, monkeypatch, int
     original = view.add_node
     failures = []
 
-    def fail_first(node, pos=QPointF(0, 0)):
+    def fail_first(node, pos=None):
         if not failures:
             failures.append(node)
             raise RuntimeError("simulated add_node failure")

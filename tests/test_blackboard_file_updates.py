@@ -18,7 +18,7 @@ import pytest
 
 from behavior_tree_widget import LeafNodeWidget
 
-from conftest import assert_blackboard_in_file, fast_config, file_blackboard, run_until_idle
+from conftest import assert_blackboard_in_file, fast_config, file_blackboard
 
 
 def read(path) -> dict:

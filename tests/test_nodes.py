@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QLineEdit,
-    QListView,
     QSpinBox,
     QWidget,
 )
@@ -53,6 +52,8 @@ from behavior_tree_widget import (
     RootNodeWidget,
     Status,
     UnknownLeafNodeWidget,
+)
+from behavior_tree_widget import (
     nodes as nodes_module,
 )
 from behavior_tree_widget.nodes import (
@@ -885,7 +886,6 @@ def test_set_field_on_gui_thread_updates_editor(bt, key, value, shown):
 @pytest.mark.parametrize("key, value, shown", SET_FIELD_CASES, ids=SET_FIELD_IDS)
 def test_set_field_from_worker_thread_updates_editor(qtbot, bt, key, value, shown):
     node = bt.AddNode(AllFields, 0, 200)
-    editor = node.field_editor(key)
     changed = Recorder(node.fieldChanged)
     run_in_thread(node.SetField, key, value)
     assert node.GetField(key) == value  # stored at once
@@ -1298,7 +1298,7 @@ def test_unknown_leaf_keeps_type_name_and_fields(qtbot):
     assert isinstance(node.field_editor("a"), QSpinBox)
     assert node.field_editor("b").currentIndex() == 1
     assert fields_frame(node).isVisibleTo(node)
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError, match="not registered"):
         node.OnRun(None)
 
 
