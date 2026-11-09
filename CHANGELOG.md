@@ -101,6 +101,12 @@ These still work and emit a `DeprecationWarning` that names the replacement:
   `loopExecutionCheckBox()`: use `main_view()`, `blackboard_view()`, `blackboard_store()`,
   `tree_logger()` and `loop_execution_check_box()`.
 
+### Fixed
+
+* A shown widget that is dropped without being closed no longer prints "Error calling Python
+  override" messages while it is garbage collected (the view's hide event ran after Python had
+  cleared the view's attributes).
+
 ### Structure
 
 * `widget.py` (2532 lines) is split into `registry.py` (node types; every built-in type is one
