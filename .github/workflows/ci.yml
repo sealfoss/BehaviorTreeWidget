@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: ruff
+        run: python -m ruff check src tests tools
+      - name: mypy
+        run: python -m mypy
+      - name: Generated forms match the .ui files
+        run: python tools/compile_ui.py --check
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }}, Windows)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: pytest
+        run: python -m pytest -n auto
+
+  build:
+    name: Wheel and sdist
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install build PySide6
+          python tools/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*

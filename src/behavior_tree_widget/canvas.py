@@ -203,6 +203,12 @@ class TreeView(QGraphicsView):
 
     HINT_TEXT = "Click New to create a behavior tree or Load to open one."
 
+    # Read by event handlers, which Qt can also call while the view is being destroyed (it hides
+    # its children then), after Python cleared the instance's attributes: safe defaults.
+    _outside_filter_installed = False
+    _selected_connection: ConnectionItem | None = None
+    _active: Gesture | None = None
+
     def __init__(
         self,
         owner: BehaviorTreeWidget | None = None,
