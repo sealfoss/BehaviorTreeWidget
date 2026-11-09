@@ -38,9 +38,11 @@ The `test` extra installs pytest, pytest-qt, pytest-timeout and pytest-xdist.
 .venv/Scripts/python -m mypy                          # type check (configuration: pyproject.toml)
 ```
 
-The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. A GitHub
-Actions workflow (`.github/workflows/`) runs ruff, mypy and the test suite on Windows for every
-push and pull request.
+The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. The GitHub
+Actions workflow `.github/workflows/ci.yml` runs on every push and pull request: ruff, mypy and
+`tools/compile_ui.py --check` on Ubuntu, the test suite on Windows with Python 3.10 and 3.13
+(offscreen, `pytest -n auto`), and then builds the wheel and the source distribution, which it
+keeps as the `dist` artifact of the run.
 
 ## Editing the Qt Designer files
 
