@@ -77,6 +77,8 @@ class BlackboardStore(QObject):
         return f"{self._namespace}/{name}"
 
     def client(self) -> py_trees.blackboard.Client:
+        """The ``py_trees.blackboard.Client`` holding this store's keys (public: for code that works
+        with py_trees directly, e.g. to inspect the keys it registered)."""
         return self._client
 
     def names(self) -> list[str]:
@@ -239,6 +241,8 @@ class BlackboardStore(QObject):
         return {name: start for name, start in (captured or {}).items() if start is not None}
 
     def is_capturing(self) -> bool:
+        """True while an execution loop records loop-start values, between :meth:`start_loop_capture`
+        and :meth:`finish_loop_capture` (public, e.g. for diagnostics and tests)."""
         with self._lock:
             return self._loop_capture is not None
 
@@ -475,33 +479,43 @@ class BlackboardStore(QObject):
         Object entries (run-time values set from code) are never saved. Other values
         that cannot be written as JSON are skipped; a message is logged and appended to
         ``problems`` when given.
+
+        The values are encoded under the lock, straight from the store: no copies are made first
+        (the encoding builds new structures and keeps no reference to the stored values).
         """
         result = []
+        notes: list[tuple[str, str]] = []  # ("object" | "problem", name or message), logged after the lock
         with self._lock:
-            entries = self.items()
-            reset = set(self._reset)
-        for name, type_name, value in entries:
-            if type_name == "Object":
-                log.debug("blackboard entry %r is an Object entry (a run-time value) and is not saved", name)
+            for name, type_name in self._types.items():
+                if type_name == "Object":
+                    notes.append(("object", name))
+                    continue
+                try:
+                    encoded = encode_value(self._client.get(self.key(name)))
+                except TypeError as error:
+                    notes.append(("problem", f"blackboard entry {name!r} was not saved: {error}"))
+                    continue
+                item = {"name": name, "type": type_name, "value": encoded}
+                if name in self._reset:
+                    item["reset"] = True
+                result.append(item)
+        for kind, detail in notes:
+            if kind == "object":
+                log.debug("blackboard entry %r is an Object entry (a run-time value) and is not saved", detail)
                 continue
-            try:
-                encoded = encode_value(value)
-            except TypeError as error:
-                message = f"blackboard entry {name!r} was not saved: {error}"
-                if not quiet:
-                    log.warning(message)
-                if problems is not None:
-                    problems.append(message)
-                continue
-            item = {"name": name, "type": type_name, "value": encoded}
-            if name in reset:
-                item["reset"] = True
-            result.append(item)
+            if not quiet:
+                log.warning(detail)
+            if problems is not None:
+                problems.append(detail)
         return result
 
     @staticmethod
     def parse_list(items: Any) -> tuple[list[tuple[str, str, Any]], list[str]]:
-        """Validate :meth:`to_list` data; returns ``(entries, problems)`` without changing anything."""
+        """Validate :meth:`to_list` data; returns ``(entries, problems)`` without changing anything.
+
+        Public: checks the ``blackboard`` list of a file before using it (:meth:`parse_items` also
+        returns the entries whose Reset flag is set).
+        """
         entries, _, problems = BlackboardStore.parse_items(items)
         return entries, problems
 
@@ -550,6 +564,7 @@ class BlackboardStore(QObject):
 
         With ``replace=True`` every entry that is not in ``items`` is removed first,
         except Object entries (run-time objects set from code, which are never saved).
+        Public: the inverse of :meth:`to_list`, for code that keeps blackboards of its own.
         """
         entries, reset, problems = self.parse_items(items)
         with self.batch():
