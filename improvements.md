@@ -1,8 +1,12 @@
 # Proposed improvements to behavior-tree-widget 0.8.0
 
-Proposals for runtime performance, readability and modularity. Nothing here has been applied;
-every item names the code it concerns (`file:line` in `src/behavior_tree_widget/`), the
-evidence behind it, the proposed change and a rough effort estimate.
+Proposals for runtime performance, readability and modularity. Every item names the code it
+concerns (`file:line` in `src/behavior_tree_widget/` of 0.8.0), the evidence behind it, the
+proposed change and a rough effort estimate.
+
+**Status:** version 0.9.0 implements these proposals. A status line under each item says what
+was done, what was done differently and why, and what was measured; [CHANGELOG.md](CHANGELOG.md)
+summarises the results.
 
 Assessed on 2026-11-09 against the working tree of branch `box-select-delete-control-nodes`
 (Python 3.14.3, PySide6 6.11.2, py_trees 2.6.0, Windows 11). Method:
@@ -30,6 +34,8 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### P1. Every change repaints the whole viewport
 
+**Status: implemented in 0.9.0.** `SmartViewportUpdate`; in addition, connection lines outside the repainted area are not painted. Pixel tests compare what the window shows with a complete repaint (`tests/test_canvas_repaint.py`). Repaint after one status change, 500 nodes: 217 ms before, 3.6 ms after.
+
 * **Evidence**: one node's status change with 500 nodes in the view costs 226 ms to repaint in
   the current mode and 45 ms with `MinimalViewportUpdate` or `SmartViewportUpdate` (offscreen
   software rendering; the 5x ratio is what matters). During execution every tick that changes a
@@ -43,6 +49,8 @@ show up only with hundreds of nodes but are cheap to fix.
 * **Effort**: trivial. **Risk**: low; revert if a proxy widget leaves artifacts.
 
 ### P2. Blackboard-aware nodes refresh once per entry per node: O(entries x nodes)
+
+**Status: (a) implemented in 0.9.0; (b) implemented differently.** Instead of a shared model, an `EntryComboBox` (`blackboard_aware.py`) applies the minimal edit to the rows it shows: a combo box backed by a shared model changes its current row by itself when the chosen entry is removed, which would change the node's field, while a removed entry must stay chosen and be shown as missing. Refreshes stay synchronous outside batches (combo boxes are current right after `AddEntry`), run once at the end of `BlackboardStore.batch()`, and nodes that are not in a view ignore the store; a loaded tree's blackboard is installed before its nodes. Loading 100 Evaluation nodes and 50 entries into a new widget: 40.7 s before, 0.95 s after; loading it again into a widget holding it: 3.3 s, 0.92 s; refreshing 40 nodes after `AddEntry`: 40.7 ms, 2.4 ms; `AddEntry` with 20 Evaluation nodes: 11.6 ms, 4.8 ms (most of the rest is the Blackboard tab adding its row).
 
 * **Evidence**: loading a tree with 100 Evaluation nodes and 50 entries takes **9.7 s**; the same
   tree with 100 plain leaves takes 0.33 s. `AddEntry` with 20 Evaluation nodes present costs 14 ms
@@ -69,6 +77,8 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### P3. Node construction parses a `.ui` file with a fresh `QUiLoader` every time
 
+**Status: implemented in 0.9.0, item 3 with one change.** 1: one shared `QUiLoader`, which brought most of the gain (creating a loader scanned the Designer plugin folders). 2: `tools/compile_ui.py` writes the forms to `_forms/`, committed; the SHA-256 recorded for each `.ui` file makes an edited but not recompiled file fall back to `QUiLoader`, and the tests fail until the forms are compiled again. 3: the rows are one `QGridLayout`, without list view, model or row widgets, but the name boxes stay read-only line edits: they look like before and need no Python code to paint, where an eliding label would. Measured before item 3: `load_ui("LeafNode.ui")` 1.09 ms before, 0.24 ms after; a leaf without fields 1.69 ms, 0.85 ms; a five-field leaf 3.36 ms, 2.51 ms; loading 502 nodes 1.96 s, 1.55 s.
+
 * **Evidence**: a field-less leaf costs 2.6 ms to construct, of which `load_ui` is 1.7 ms
   (creating the `QUiLoader` ~0.9 ms, `load()` ~0.9 ms); a five-field leaf costs 5.9 ms, 3.8 ms of it
   in `_rebuild_fields`. Consequences: `LoadTree` of 502 nodes 2.0 s, `PasteNodes` of 501 nodes
@@ -89,6 +99,8 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### P4. Children order is re-derived from scene geometry on every call
 
+**Status: implemented in 0.9.0.** Each parent keeps its children in order; a moved child is put back in place by bisection and only the order numbers between its old and new place are redrawn (exact ties fall back to a full sort). `GetChildren()` with 500 children: 0.84 ms before, 0.003 ms after; moving one of 500 siblings: 0.95 ms, 0.048 ms.
+
 * **Evidence**: `GetChildren()` on a node with 500 children costs 0.9 ms per call; moving one of
   500 siblings costs 1 ms per mouse move because `_on_node_geometry` -> `_refresh_order` re-sorts
   the siblings each time. `_tree_data`, `TreeExecutor._build`, `iter_subtree`, `_copy_nodes` and
@@ -100,6 +112,8 @@ show up only with hundreds of nodes but are cheap to fix.
 * **Effort**: small.
 
 ### P5. Per-tick work proportional to the whole tree, not to what ticked
+
+**Status: implemented in 0.9.0.** The visitor records the behaviours a tick visited; those and the ones running before the tick are refreshed, in build order, so signals keep their order. The first tick of a run and any tick after the shown sub-trees changed refresh everything; the twin map is cached and invalidated on Zoom In / Go Back. 50 ticks of 500 leaves of which one runs: 15.6 / 17.9 ms before (log off / INFO), 5.9 / 6.0 ms after; when every leaf ticks: 197 / 534 ms, 190 / 520 ms, which is py_trees and the INFO lines themselves. Left open: py_trees walks the whole tree once per tick for "full" visitors although none is added (about 0.1 ms at 500 nodes); skipping it would mean overriding its tick.
 
 * **Evidence**: 50 ticks of a memory-less Selector over 500 leaves cost 218 ms with logging off
   and 540 ms at INFO. Part of the INFO cost is legitimate (500 "executed" lines per tick), but
@@ -115,6 +129,8 @@ show up only with hundreds of nodes but are cheap to fix.
 * **Effort**: small-medium.
 
 ### P6. Hit testing with many overlapping connections
+
+**Status: implemented differently in 0.9.0.** The premise was wrong: even Qt's own C++ `shape()` costs 4.1 ms per query here, because Qt strokes the curve again at every call. So `ConnectionItem` keeps its hit area (the stroke and the order number) as a stored path with no pen, which Qt tests without calling Python; `path()` and `pen()` still give the curve and the visible pen. A connection drag looks for a label again only after the mouse moved 2 pixels or the view changed. In a fan of 500 lines: 12.2 ms before, 0.59 ms after (Qt checking the 235 lines that really overlap the point); on empty canvas: 4.45 ms, 0.042 ms. As a side effect, the whole order number of a line now selects it.
 
 * **Evidence**: `scene.items(pos)` costs 12 ms with 500 siblings fanning out of one parent (235
   connection strokes genuinely overlap the probed points) and 4.5 ms even on empty canvas;
@@ -132,6 +148,8 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### P7. A new thread per `OnRun` call and a GUI-thread wait per started leaf
 
+**Status: implemented in 0.9.0.** `WorkerPool` (`_workers.py`): daemon threads that are reused, a new one only when all are busy, idle ones end after 60 s, a stuck call holds one and never blocks exit. `run_in_daemon_thread` is unchanged (a test requires a new thread per call). The per-tick budget is the class attribute `TreeExecutor.TICK_WAIT_BUDGET = 0.1` s (a `TreeConfig` option was considered; a class attribute keeps tree files unchanged). 200 quick worker-thread leaves: 54.8 ms and 600 threads before, 37.2 ms and 1 thread after; the longest tick starting 10 leaves of 15 ms: 157 ms, 110 ms.
+
 * **Evidence**: a Sequence of 200 quick worker-thread leaves completes in one tick of 67 ms
   (~0.33 ms per leaf: thread start plus the `THREAD_WAIT` poll).
 * **Cause**: `execution.py:97-116` starts a `threading.Thread` per call (deliberately, so an `OnRun`
@@ -144,6 +162,8 @@ show up only with hundreds of nodes but are cheap to fix.
 * **Effort**: medium. **Risk**: cancellation semantics are subtle; the existing tests cover them well.
 
 ### P8. Smaller items
+
+**Status: mostly implemented in 0.9.0.** `to_list()` encodes under the lock without copying first (1.4x to 1.8x faster); the blackboard file writer compares `BlackboardStore.revision(saved=True)` and does not encode at all when nothing the file holds changed; `get()` still copies containers, since callers may change what they get. `TreeView` keeps its root, keeps its nodes in a dict and sorts the selection only when asked; the grid is drawn with `drawLines`; `nearest_free_offset` is unchanged. The `relayout` cache was not done; P3.3 (fewer widgets per node) and P2 (fewer relayouts of the nodes listing the blackboard) reduced the cost it targeted.
 
 * `BlackboardStore.get` deep-copies containers per call (`blackboard.py:609-613`): a 5000-item
   list costs 0.4 ms per read; `to_list` copies and then encodes. Encode directly under the lock in
@@ -165,6 +185,8 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### R1. `__setattr__` interception of `_title` / `_fields`
 
+**Status: implemented in 0.9.0.** Class-level defaults replace every `__dict__` guard; assigning `self._title` / `self._fields` after construction emits a `DeprecationWarning` (and still works); internal code uses `_apply_title` / `_replace_fields`; `SetFields(fields)` is new. The test suite turns the deprecation into an error, so internal use fails the tests.
+
 `nodes.py:317-328` makes assignments to `self._title` and `self._fields` update the UI. It is the
 reason for the `self.__dict__.get("_name")` idiom (17 sites in 8 files) and for `super().__setattr__`
 calls, and it makes attribute order in constructors fragile (`subtree.py:57-61`,
@@ -178,6 +200,8 @@ before `super().__init__()` and remove the `__dict__.get` guards.
 
 ### R2. Two log channels written by hand everywhere
 
+**Status: implemented in 0.9.0.** `BehaviorTreeWidget._report` and the executor's `report` write the module logger and the tree log with one text.
+
 Most warnings are written twice: `log.warning(...)` for the module logger and
 `self._log(LogLevel.WARNING, ...)` for the tree log (`widget.py:1330-1331, 1878-1879, 2113-2114,
 2524-2525`; `execution.py:222-223, 261-263, 776-787`). Proposal: one `_report(level, message,
@@ -186,6 +210,8 @@ exc_info=None)` on the widget and the executor that writes both, or a `logging.H
 `TreeLogger`.
 
 ### R3. Long methods
+
+**Status: implemented in 0.9.0, except the last row.** `mousePressEvent` dispatches per hit kind; `_tick` is `_tick_tree` + `_after_tick`; `LeafBehaviour.update` is five steps; Promote to Sub-Tree is `plan_promotion` / `write_subtree` / `replace_group` (`promote.py`); `_prepare_nodes` is `tree_io.prepare_nodes` + `_apply_saved_node_data`; `_install_loaded_tree` uses `_settle_blackboard_file`, `_snapshot_current` and `_restore_previous`; `EntryRow.__init__` uses `_reset_check_box`, `_build_value_editor` and `_wire_signals`. `demo._unconsumed_arguments` was not replaced: argparse cannot tell which entries Qt consumed (the value of `-style fusion` looks like a file name), and `QCommandLineParser` reads `QApplication.arguments()`, which garbles non-ASCII file names on Windows, the reason the function exists.
 
 | Method | Lines | Suggested split |
 |---|---|---|
@@ -199,6 +225,8 @@ exc_info=None)` on the widget and the executor that writes both, or a `logging.H
 | `demo._unconsumed_arguments` (`demo.py:181-209`) | 30 | replace by `QCommandLineParser`, or `argparse.parse_known_args` run before `QApplication` |
 
 ### R4. Repeated micro-patterns that deserve helpers
+
+**Status: implemented in 0.9.0.** `QSignalBlocker` replaces every manual pair; `set_text_quietly` is in `_qt.py`; `BlackboardAwareLeaf` and `EntryComboBox` (`blackboard_aware.py`) replace the duplicated code; `INT_MIN` / `INT_MAX`, `file_key` and the file filter are in `_common.py`; the five predicates are `NodeTypeRegistry.offers()`.
 
 * `blocked = w.blockSignals(True); try: ... finally: w.blockSignals(blocked)` appears 22 times in
   6 files. PySide6 ships `QSignalBlocker`: `with QSignalBlocker(widget): ...`.
@@ -217,6 +245,8 @@ exc_info=None)` on the widget and the executor that writes both, or a `logging.H
 
 ### R5. Naming, stale comments, unused code
 
+**Status: implemented in 0.9.0.** The accessors use snake_case, like `view()`, `button()` and the `TreeView` API: `main_view()`, `blackboard_view()`, `blackboard_store()`, `tree_logger()`, `loop_execution_check_box()`; the camelCase names are deprecated aliases. The stale comment is fixed. `NodeFactory`, `TreeView.center_on_node` and `NotesNodeWidget._resize_note` are deleted; `connection_item`, `load_list`, `parse_list`, `is_capturing` and `client()` are used by tests and are now documented as public.
+
 * The accessor group mixes styles: `view()`, `mainView()`, `blackboardView()`, `button()`,
   `treeLogger()` next to the CamelCase API (`GetRootNode`). Pick one style for accessors.
 * Stale comment: `widget.py:327-328` says blackboard changes are "written to the tree file"; since
@@ -231,6 +261,8 @@ exc_info=None)` on the widget and the executor that writes both, or a `logging.H
 
 ### R6. Documentation shape
 
+**Status: implemented in 0.9.0.** [docs/](docs) holds the user guide, built-in nodes, writing nodes, file formats, API reference, development and design notes; [CHANGELOG.md](CHANGELOG.md) the changes; README.md the overview, installation and quick start. `tools/build_release.py` reads the version from `__version__`, and the install instructions name no version.
+
 `README.md` is the only documentation and carries the version history inline ("added in 0.6.0 to
 0.8.0", compatibility notes per version). Proposal: a `docs/` folder (user guide, writing nodes,
 file formats, design notes, i.e. the current sections 3-13), a `CHANGELOG.md`, and a README of
@@ -238,6 +270,8 @@ quick start plus links. Read the version from `__version__` in a release script 
 repeating `0.8.0` in the install instructions.
 
 ### R7. Tests
+
+**Status: implemented in 0.9.0** (in a separate step after the code changes): the regression round files are folded into the feature files, opt-in performance tests are in `tests/perf` (`pytest -m perf`), and the test node types live in one shared module. pytest-xdist runs the suite in about 35 s on 16 workers instead of 3.5 minutes.
 
 The suite is thorough (2850 tests) but 5k of its 30k lines live in `test_regressions_round3.py`
 to `test_regressions_round10.py`, named by review round rather than by feature. Proposal: fold
@@ -252,6 +286,8 @@ nodes overlap (`Succeed`/`Fail`, `RunningN`/`RunningTicks`); one shared module w
 
 ### M1. Split `widget.py` (2532 lines) by responsibility
 
+**Status: implemented in 0.9.0.** `widget.py`: 2532 lines before, about 1700 after (mostly API docstrings); the new modules are `registry.py`, `tree_io.py`, `document.py`, `zoom.py`, `promote.py`, `clipboard.py` and `blackboard_file.py`. Names imported from `widget.py` before still are importable from it.
+
 | Lines today | Responsibility | Proposed module |
 |---|---|---|
 | 82-110, 169-219 | node type registry: `_register`, `_validate_leaf_class`, built-in/yielding/reserved names, `register_node_type` | `registry.py`: a `NodeTypeRegistry` class; the widget owns one, the decorator fills a global one |
@@ -263,6 +299,8 @@ nodes overlap (`Succeed`/`Fail`, `RunningN`/`RunningTicks`); one shared module w
 | rest | tabs, buttons, signals, public API delegating to the above | `widget.py` (~900 lines) |
 
 ### M2. A document model separate from the view
+
+**Status: implemented in 0.9.0, in two steps.** First `TreeDocument` took a shown tree's file state (path, options, unsaved changes, the blackboard section of old files) and writing it, for the tree itself and every zoom level. Then the document took the nodes and their links: a `TreeView` shows a document, and the hidden nodes executing a Sub-Tree node form a document that is not shown.
 
 `TreeView` is both the scene and the model (`_nodes`, `_connections`, order, selection), and "the
 tree itself" versus "the sub-tree shown" is encoded as `_main_view` versus `_levels[-1].view`,
@@ -278,6 +316,8 @@ code path, and sub-trees load headlessly as documents without a view.
 
 ### M3. Explicit internal interfaces instead of private attribute access across modules
 
+**Status: implemented in 0.9.0.** `NodeWidget._link` / `_unlink` / `scene_rect`; the `ExecutionHost` protocol and `WidgetExecutionHost` (`execution_host.py`), the only place the executor reads the widget; behaviours use executor methods (`generation()`, `is_aborting()`, ...), and `TreeExecutor.abandon()` replaces the widget poking at executor state when it is destroyed.
+
 79 places in `canvas.py`, `execution.py` and `widget.py` reach into other objects' privates
 (`node._item/_children/_parent/_lock/_canvas`, `owner._blackboard/_config/_levels/_shown_twins()`,
 `executor._owner/_generation/_aborting/_token_owner`). Both `canvas.connect_nodes`
@@ -292,6 +332,8 @@ each module's dependencies become visible.
 
 ### M4. Split `canvas.py` (1837 lines)
 
+**Status: implemented in 0.9.0.** `geometry.py`, `items.py`, `gestures.py` (one class per gesture; `view._gesture` is a property giving the gesture kind) and `menus.py`; `canvas.py` re-exports the old names.
+
 `geometry.py` (`clamp_to_scene`, `nearest_free_offset`, `connection_path`, `anchor_point`,
 `iter_subtree`), `items.py` (`NodeItem`, `ConnectionItem`, `DragLineItem`, `SelectionBandItem`),
 `gestures.py` (one class per gesture: pan, move, resize, connect, band select, each with
@@ -299,6 +341,8 @@ each module's dependencies become visible.
 functions and the group actions). `TreeView` keeps the model API, selection, locking and painting.
 
 ### M5. Make `blackboard.py` (1648 lines) a package
+
+**Status: implemented in 0.9.0.** `blackboard/` with `store.py`, `values.py`, `view.py` and `float_spinbox.py`; `FloatSpinBox` has 55 unit tests of its own.
 
 `blackboard/values.py` (`ENTRY_TYPES`, `canonical_type`, `infer_type`, `coerce_value`,
 `parse_container_text`, `safe_repr`, ...), `blackboard/float_spinbox.py` (`FloatSpinBox`: 200 lines
@@ -308,6 +352,8 @@ of careful float handling that deserve their own unit tests), `blackboard/store.
 
 ### M6. Split `execution.py`
 
+**Status: implemented in 0.9.0.** `behaviours.py`, `tree_builder.py`, `execution_host.py`, `_workers.py`, and a `CommandQueue` in `execution.py` (`TreeExecutor._command` stays there).
+
 `behaviours.py` (`LeafBehaviour`, `FailingBehaviour`, `SubTreeBehaviour`, `_ExecutionLog`),
 `tree_builder.py` (`_build`, `execution.py:738-836`, returning `(tree, behaviours, labels,
 subtree_nodes)`), and a `CommandQueue` for the ~120 lines of ordering rules in `_command`,
@@ -316,6 +362,8 @@ merit direct unit tests.
 
 ### M7. One table for node kinds
 
+**Status: implemented in 0.9.0.** `registry.BUILTIN_KINDS`: one `NodeKind` per built-in type (menu section, factory, how its saved data is recognised); creating, offering, the add-node menu and loading all read it.
+
 `_create_node` (`widget.py:525-539`), `_prepare_nodes` (`2257-2291`), `_node_menu_entries`
 (`497-523`) and `_saved_as_builtin` (`263-274`) each special-case Root, composites, Negation, Notes
 and Group by name. A `NodeKind` descriptor per class (`menu_group`, `create()`, `is_structural`,
@@ -323,6 +371,8 @@ and Group by name. A `NodeKind` descriptor per class (`menu_group`, `create()`, 
 did five times) a one-table change.
 
 ### M8. Tooling that supports the above
+
+**Status: implemented in 0.9.0** (in a separate step after the code changes): ruff and mypy are configured in `pyproject.toml` (the generated forms excluded), a GitHub Actions workflow runs them and the tests on Windows, and `tools/compile_ui.py --check` and the tests check the generated forms. The wheels are still committed to `dist/`, as this repository does; `tools/build_release.py` builds them.
 
 * Add `[tool.ruff]` (the `noqa` codes in use imply `E`, `N`, `BLE`, `SIM`) and `[tool.mypy]` to
   `pyproject.toml`; the package ships `py.typed` but is not type-checked.
