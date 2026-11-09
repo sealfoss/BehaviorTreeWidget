@@ -6,6 +6,7 @@ Run it with ``python -m behavior_tree_widget [tree.json]`` or the
 
 from __future__ import annotations
 
+import functools
 import logging
 import random
 import sys
@@ -181,32 +182,39 @@ class DemoWindow(QMainWindow):
 def _unconsumed_arguments(argv: list[str], arguments: list[str]) -> list[str]:
     """``argv`` without the entries QApplication consumed (its options, e.g. ``-style fusion``).
 
-    ``arguments`` is ``QApplication.arguments()``: Qt only removes entries, but it decodes
-    them with the local 8-bit code page, which garbles other characters (e.g. in file
-    names on Windows). So the kept entries are taken from ``argv``. If that is ambiguous,
+    ``arguments`` is ``QApplication.arguments()``. Qt only removes entries, but it decodes them
+    with the local 8-bit code page, which garbles other characters (e.g. in file names on
+    Windows), so the kept entries are taken from ``argv``. Qt removes options (``-name``) and the
+    values following them; every way of removing such entries that leaves ``arguments`` is
+    considered. If they keep different strings (a garbled name can look like an option's value),
     ``arguments`` is returned.
     """
+    removable = len(argv) - len(arguments)  # the number of entries Qt consumed
+    if not argv or removable < 0:
+        return list(arguments)
 
     def same(arg: str, qt_arg: str) -> bool:
         return arg == qt_arg or QFile.decodeName(QFile.encodeName(arg)) == qt_arg
 
-    # Qt removes options ("-name") and option values; a value follows its option with only
-    # removed entries in between. Follow every way of removing entries that fits:
-    # (index into arguments, removed options not yet followed by a removed value) -> up to
-    # two distinct kept lists. The result is used only if all of them keep the same strings.
-    removable = len(argv) - len(arguments)  # the number of entries Qt consumed
-    states: dict[tuple[int, int], set[tuple[str, ...]]] = {(1, 0): {tuple(argv[:1])}}
-    for position, arg in enumerate(argv[1:], 1):
-        following: dict[tuple[int, int], set[tuple[str, ...]]] = {}
-        for (index, options), kept in states.items():
-            if index < len(arguments) and same(arg, arguments[index]):
-                following.setdefault((index + 1, 0), set()).update(k + (arg,) for k in kept)
-            if position - index < removable and (arg.startswith("-") or options):
-                key = (index, options + 1 if arg.startswith("-") else options - 1)
-                following.setdefault(key, set()).update(kept)
-        states = {key: set(list(kept)[:2]) for key, kept in following.items()}
-    results = set().union(*(kept for (index, _), kept in states.items() if index == len(arguments)))
-    return list(results.pop()) if len(results) == 1 else list(arguments)
+    @functools.lru_cache(maxsize=None)
+    def kept(position: int, index: int, waiting: int) -> frozenset[tuple[str, ...]]:
+        """The entries ``argv[position:]`` can keep while leaving ``arguments[index:]`` (at most two
+        different ones); ``waiting``: options removed before ``position`` whose value was not."""
+        if position == len(argv):
+            return frozenset({()}) if index == len(arguments) else frozenset()
+        arg = argv[position]
+        ways: set[tuple[str, ...]] = set()
+        if index < len(arguments) and same(arg, arguments[index]):
+            ways.update((arg, *rest) for rest in kept(position + 1, index + 1, 0))
+        if position - index < removable:  # Qt may have removed this entry
+            if arg.startswith("-"):
+                ways.update(kept(position + 1, index, waiting + 1))  # an option
+            elif waiting:
+                ways.update(kept(position + 1, index, waiting - 1))  # the value of an option
+        return frozenset(list(ways)[:2])
+
+    results = kept(1, 1, 0)
+    return [argv[0], *next(iter(results))] if len(results) == 1 else list(arguments)
 
 
 def main(argv: list[str] | None = None) -> int:
