@@ -571,8 +571,8 @@ def test_renaming_an_entry_updates_the_nodes(bt):
     node.SetValueName("i")
     node.SetCompareTo("i2")
     bt._set_modified(False)
-    bt.blackboardStore().rename("i", "count")
-    bt.blackboardStore().rename("i2", "limit")
+    bt.blackboard_store().rename("i", "count")
+    bt.blackboard_store().rename("i2", "limit")
     assert node.GetValueName() == "count" and node.GetCompareTo() == "limit"
     assert combo(node, "ValueName").currentText() == "count"
     assert combo(node, "CompareTo").currentText() == "limit"
@@ -583,7 +583,7 @@ def test_renaming_an_entry_in_the_blackboard_tab_updates_the_nodes(bt):
     add_entries(bt, ["i"])
     node = bt.AddNode("Evaluation", 0, 200)
     node.SetValueName("i")
-    row = bt.blackboardView().row("i")
+    row = bt.blackboard_view().row("i")
     row.name_edit.setText("renamed")
     row.name_edit.editingFinished.emit()
     assert node.GetValueName() == "renamed"

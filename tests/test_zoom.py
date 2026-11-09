@@ -212,7 +212,7 @@ def test_go_back_is_disabled_by_default(make_widget, bt):
         assert widget.GoBack() is False
     assert unloaded.GetZoomPath() == []
     assert len(bt.GetZoomPath()) == 1 and same(bt.GetZoomPath()[0], bt.GetFilePath())
-    assert bt.view() is bt.mainView()
+    assert bt.view() is bt.main_view()
     with pytest.raises(RuntimeError):
         bt.SaveSubTree()  # nothing is zoomed into
 
@@ -254,8 +254,8 @@ def test_the_menu_item_zooms_in(tree, chain, tmp_path, dialogs):
     assert tree.GetRootNode() is not main_root
     assert labels(tree) == ["a1"]
     assert by_id(tree.GetNodes(), "to_b").GetFile() == "b_BT.json"
-    assert not tree.mainView().isVisible()
-    assert tree.view() is not tree.mainView() and tree.view().isVisible()
+    assert not tree.main_view().isVisible()
+    assert tree.view() is not tree.main_view() and tree.view().isVisible()
     assert same(tree.view().base_folder, tmp_path)
     assert dialogs.kinds() == []  # nothing to ask, nothing to report
     assert not tree.IsModified()
@@ -266,7 +266,7 @@ def test_three_levels_deep_and_back_to_the_top(qtbot, tree, chain, tmp_path):
     zooms, selections = [], []
     tree.zoomChanged.connect(lambda depth, path: zooms.append((depth, path)))
     tree.nodeSelectionChanged.connect(lambda: selections.append(1))
-    main_view = tree.mainView()
+    main_view = tree.main_view()
     main_nodes = list(tree.GetNodes())
     paths = [tree.GetFilePath(), str(tmp_path / "a_BT.json"), str(tmp_path / "b_BT.json"), str(tmp_path / "c_BT.json")]
     titles = [
@@ -326,7 +326,7 @@ def test_the_go_back_button_goes_up_one_level(tree, chain):
     tree.button("GoBack").click()
     assert tree.GetZoomDepth() == 1 and labels(tree) == ["a1"]
     tree.button("GoBack").click()
-    assert tree.GetZoomDepth() == 0 and tree.view() is tree.mainView()
+    assert tree.GetZoomDepth() == 0 and tree.view() is tree.main_view()
     assert not tree.button("GoBack").isEnabled()
 
 
@@ -341,14 +341,14 @@ def test_zooming_in_again_shows_the_file_as_saved(tree, chain):
 
 # ============================================================================ editing a sub-tree
 def test_the_editing_api_acts_on_the_tree_shown(tree, chain, tmp_path):
-    main_nodes = list(tree.mainView().nodes())
+    main_nodes = list(tree.main_view().nodes())
     tree.ZoomIn(chain)
     root = tree.GetRootNode()
     assert isinstance(root, RootNodeWidget) and root.GetId() == "root"
     added = add_mark(tree, "a2", 600, 200, root)
     assert added in tree.GetNodes() and added.GetParent() is root
-    assert added not in tree.mainView().nodes()
-    assert tree.mainView().nodes() == main_nodes
+    assert added not in tree.main_view().nodes()
+    assert tree.main_view().nodes() == main_nodes
     tree.SelectNodes([added])
     assert tree.GetSelectedNodes() == [added]
     tree.Disconnect(added)
@@ -645,7 +645,7 @@ def test_all_views_are_locked_while_executing(qtbot, tree, tmp_path):
     tree.Execute()
     try:
         qtbot.waitUntil(lambda: tree.GetExecutionState() == "Running", timeout=3000)
-        assert tree.view().is_locked() and tree.mainView().is_locked()
+        assert tree.view().is_locked() and tree.main_view().is_locked()
         with pytest.raises(RuntimeError):
             tree.AddNode("Mark", 600, 200)
         with pytest.raises(RuntimeError):
@@ -657,7 +657,7 @@ def test_all_views_are_locked_while_executing(qtbot, tree, tmp_path):
         assert not tree.IsModified()
     finally:
         tree.Stop()
-    assert not tree.view().is_locked() and not tree.mainView().is_locked()
+    assert not tree.view().is_locked() and not tree.main_view().is_locked()
     assert by_id(tree.GetNodes(), "sp").GetStatus() is NodeStatus.READY
     add_mark(tree, "after", 600, 200)  # editable again
 
@@ -680,7 +680,7 @@ def test_zoom_in_and_go_back_while_executing(qtbot, tree, tmp_path, dialogs):
             tree.AddNode("Mark", 600, 200)
         assert tree.GoBack() is True
         assert tree.GetZoomDepth() == 0 and tree.GetExecutionState() == "Running"
-        assert tree.view() is tree.mainView() and tree.view().is_locked()
+        assert tree.view() is tree.main_view() and tree.view().is_locked()
         tree.ZoomIn(node)  # and in again
         assert tree.GetZoomDepth() == 1
     finally:
@@ -738,7 +738,7 @@ def test_zoom_in_refuses_missing_and_invalid_files(qtbot, tree, tmp_path, file, 
     with pytest.raises(TreeFileError):
         tree.ZoomIn(node)
     assert tree.GetZoomDepth() == 0 and zooms == []
-    assert tree.view() is tree.mainView() and tree.mainView().isVisible()
+    assert tree.view() is tree.main_view() and tree.main_view().isVisible()
     assert not tree.button("GoBack").isEnabled()
     qtbot.waitUntil(lambda: len(live_tree_views(tree)) == views, timeout=3000)
     if content is None:
@@ -840,7 +840,7 @@ def test_load_tree_closes_the_sub_trees_shown(make_widget, tree, chain, tmp_path
     assert dialogs.kinds() == []  # LoadTree(path) does not ask
     assert tree.GetZoomDepth() == 0 and zooms[-1] == 0
     assert not tree.button("GoBack").isEnabled()
-    assert tree.view() is tree.mainView() and tree.mainView().isVisible()
+    assert tree.view() is tree.main_view() and tree.main_view().isVisible()
     assert labels(tree) == ["o1"]
     assert title(tree) == "Behavior Tree - other_BT.json"
     assert not tree.IsModified()
@@ -988,7 +988,7 @@ def test_promote_a_group_inside_a_sub_tree(tree, tmp_path):
     assert x not in tree.GetNodes() and group not in tree.GetNodes()
     assert tree.IsModified()
     assert file_bytes(tree.GetFilePath()) == main_before
-    assert subtree not in tree.mainView().nodes()
+    assert subtree not in tree.main_view().nodes()
     tree.ZoomIn(subtree)
     assert labels(tree) == ["x", "y"]
     assert tree.GetZoomDepth() == 2
@@ -1017,7 +1017,7 @@ def test_copy_from_the_main_tree_and_paste_into_a_sub_tree(tree, chain, tmp_path
     assert len(pasted) == 1 and pasted[0] in tree.GetNodes()
     assert pasted[0].GetField("label") == "copied" and pasted[0] is not copied
     assert tree.GetSelectedNodes() == pasted
-    assert len(tree.mainView().nodes()) == main_count
+    assert len(tree.main_view().nodes()) == main_count
     assert tree.IsModified()
     assert tree.SaveSubTree()
     assert any(item["id"] == pasted[0].GetId() for item in read_json(tmp_path / "a_BT.json")["nodes"])
@@ -1030,7 +1030,7 @@ def test_copy_inside_a_sub_tree_and_paste_into_the_main_tree(tree, chain):
     assert tree.CopyNodes([a1])
     assert tree.GoBack()
     pasted = tree.PasteNodes()
-    assert len(pasted) == 1 and pasted[0] in tree.mainView().nodes()
+    assert len(pasted) == 1 and pasted[0] in tree.main_view().nodes()
     assert pasted[0].GetField("label") == "a1"
 
 

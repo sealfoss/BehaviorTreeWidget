@@ -66,7 +66,7 @@ def record(signal) -> list:
 
 
 def box(bt) -> QCheckBox:
-    return bt.loopExecutionCheckBox()
+    return bt.loop_execution_check_box()
 
 
 def click_box(bt) -> None:

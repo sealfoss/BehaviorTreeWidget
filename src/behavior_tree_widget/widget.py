@@ -15,6 +15,7 @@ import functools
 import logging
 import os
 import threading
+import warnings
 from typing import Any, Iterable
 
 import shiboken6
@@ -103,6 +104,12 @@ BUTTON_GLYPHS = {
     "Configure": "⚙︎",
 }
 SYMBOL_FONTS = ["Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols2", "Noto Sans Symbols", "Apple Symbols"]
+
+
+def _deprecated_accessor(old: str, new: str) -> None:
+    warnings.warn(
+        f"BehaviorTreeWidget.{old}() is deprecated; use {new}() instead", DeprecationWarning, stacklevel=3
+    )
 
 
 def _cleanup_after_destroy(store: BlackboardStore, executor: TreeExecutor, log_closer) -> None:
@@ -628,7 +635,7 @@ class BehaviorTreeWidget(QTabWidget):
         file is created with the first message written to it."""
         return self._tree_log.path()
 
-    def treeLogger(self) -> TreeLogger:  # noqa: N802
+    def tree_logger(self) -> TreeLogger:
         """The :class:`~behavior_tree_widget.tree_log.TreeLogger` writing the tree's log."""
         return self._tree_log
 
@@ -917,14 +924,16 @@ class BehaviorTreeWidget(QTabWidget):
         """The QGraphicsView showing the tree shown (a sub-tree's own view while zoomed in)."""
         return self._view
 
-    def mainView(self) -> TreeView:  # noqa: N802
+    def main_view(self) -> TreeView:
         """The QGraphicsView of the tree itself (hidden while a sub-tree is shown)."""
         return self._main_view
 
-    def blackboardView(self) -> BlackboardView:  # noqa: N802
+    def blackboard_view(self) -> BlackboardView:
+        """The Blackboard tab."""
         return self._blackboard_view
 
-    def blackboardStore(self) -> BlackboardStore:  # noqa: N802
+    def blackboard_store(self) -> BlackboardStore:
+        """The blackboard (thread-safe), behind GetEntry / SetEntry."""
         return self._blackboard
 
     def executor(self) -> TreeExecutor:
@@ -934,9 +943,30 @@ class BehaviorTreeWidget(QTabWidget):
         """One of the buttons: Execute, Pause, Stop, Reset, Configure, Save, Load, New, GoBack."""
         return self._buttons[name]
 
-    def loopExecutionCheckBox(self) -> QCheckBox:  # noqa: N802
+    def loop_execution_check_box(self) -> QCheckBox:
         """The "Loop Execution" check box of the execution controls."""
         return self._loop_box
+
+    # Names of the accessors before 0.9.0 (deprecated).
+    def mainView(self) -> TreeView:  # noqa: N802
+        _deprecated_accessor("mainView", "main_view")
+        return self.main_view()
+
+    def blackboardView(self) -> BlackboardView:  # noqa: N802
+        _deprecated_accessor("blackboardView", "blackboard_view")
+        return self.blackboard_view()
+
+    def blackboardStore(self) -> BlackboardStore:  # noqa: N802
+        _deprecated_accessor("blackboardStore", "blackboard_store")
+        return self.blackboard_store()
+
+    def treeLogger(self) -> TreeLogger:  # noqa: N802
+        _deprecated_accessor("treeLogger", "tree_logger")
+        return self.tree_logger()
+
+    def loopExecutionCheckBox(self) -> QCheckBox:  # noqa: N802
+        _deprecated_accessor("loopExecutionCheckBox", "loop_execution_check_box")
+        return self.loop_execution_check_box()
 
     # ================================================================== internals: dialogs
     def _run_dialog(self, dialog: QDialog) -> bool:

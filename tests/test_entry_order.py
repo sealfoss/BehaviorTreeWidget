@@ -131,15 +131,15 @@ def file_names(bt) -> list[str]:
 
 
 def show_blackboard(qtbot, bt) -> None:
-    bt.setCurrentWidget(bt.blackboardView())
-    qtbot.waitUntil(lambda: bt.blackboardView().isVisible(), timeout=2000)
+    bt.setCurrentWidget(bt.blackboard_view())
+    qtbot.waitUntil(lambda: bt.blackboard_view().isVisible(), timeout=2000)
     QApplication.processEvents()
 
 
 def click_arrow(qtbot, bt, name: str, direction: str) -> None:
     """Click the up/down arrow of entry ``name`` with the mouse (the Blackboard tab is shown first)."""
     show_blackboard(qtbot, bt)
-    row = bt.blackboardView().row(name)
+    row = bt.blackboard_view().row(name)
     button = row.move_up_button if direction == "up" else row.move_down_button
     qtbot.waitUntil(button.isVisible, timeout=2000)
     QTest.mouseClick(button, LEFT)
@@ -198,7 +198,7 @@ def run_in_thread(target):
 @pytest.mark.parametrize("type_name", list(ENTRY_TYPES))
 def test_every_entry_type_has_up_and_down_arrows(bt, type_name):
     bt.AddEntry("entry", type_name, SAMPLE_VALUES[type_name])
-    row = bt.blackboardView().row("entry")
+    row = bt.blackboard_view().row("entry")
     up, down = row.move_up_button, row.move_down_button
     assert isinstance(up, QToolButton) and isinstance(down, QToolButton)
     assert up.objectName() == "MoveUp" and down.objectName() == "MoveDown"
@@ -217,7 +217,7 @@ def test_every_entry_type_has_up_and_down_arrows(bt, type_name):
 def test_every_entry_type_can_be_moved_with_its_arrows(bt, type_name):
     bt.AddEntry("first", "Integer", 0)
     bt.AddEntry("entry", type_name, SAMPLE_VALUES[type_name])
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     view.row("entry").move_up_button.click()
     assert_view_in_order(view, ["entry", "first"])
     view.row("entry").move_down_button.click()
@@ -228,7 +228,7 @@ def test_every_entry_type_can_be_moved_with_its_arrows(bt, type_name):
 def test_arrows_are_created_for_a_ui_file_without_them(monkeypatch, qtbot, bt, tmp_path):
     strip_from_entry_ui(monkeypatch, tmp_path, "MoveUp", "MoveDown")
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     row = view.row("b")
     assert row.move_up_button.objectName() == "MoveUp" and row.move_down_button.objectName() == "MoveDown"
     assert row.move_up_button.arrowType() == Qt.ArrowType.UpArrow
@@ -243,22 +243,22 @@ def test_arrows_are_created_for_a_ui_file_without_them(monkeypatch, qtbot, bt, t
 # ============================================================================ enabled arrows
 def test_a_single_entry_cannot_move(bt):
     bt.AddEntry("only", "Integer", 1)
-    assert arrow_states(bt.blackboardView()) == [(False, False)]
+    assert arrow_states(bt.blackboard_view()) == [(False, False)]
 
 
 def test_two_entries(bt):
     add_entries(bt, "a", "b")
-    assert arrow_states(bt.blackboardView()) == [(False, True), (True, False)]
+    assert arrow_states(bt.blackboard_view()) == [(False, True), (True, False)]
 
 
 @pytest.mark.parametrize("count", [3, 4, 7])
 def test_three_or_more_entries(bt, count):
     add_entries(bt, *[f"e{index}" for index in range(count)])
-    assert arrow_states(bt.blackboardView()) == expected_states(count)
+    assert arrow_states(bt.blackboard_view()) == expected_states(count)
 
 
 def test_states_follow_added_entries(bt):
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     bt.AddEntry("a", "Integer", 0)
     assert arrow_states(view) == expected_states(1)
     bt.AddEntry("b", "String", "x")
@@ -270,7 +270,7 @@ def test_states_follow_added_entries(bt):
 
 def test_states_follow_removed_entries(bt):
     add_entries(bt, "a", "b", "c", "d")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     bt.RemoveEntry("d")
     assert_view_in_order(view, ["a", "b", "c"])
     assert not view.row("c").move_down_button.isEnabled()  # the new last entry
@@ -283,7 +283,7 @@ def test_states_follow_removed_entries(bt):
 
 def test_states_follow_entries_removed_with_the_remove_button(bt):
     add_entries(bt, "a", "b", "c", "d")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     view.row("a").select_box.setChecked(True)
     view.row("d").select_box.setChecked(True)
     view.remove_button.click()
@@ -292,8 +292,8 @@ def test_states_follow_entries_removed_with_the_remove_button(bt):
 
 def test_states_follow_a_rename(qtbot, bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
-    bt.blackboardStore().rename("c", "last")
+    view = bt.blackboard_view()
+    bt.blackboard_store().rename("c", "last")
     assert_view_in_order(view, ["a", "b", "last"])
     edit = view.row("a").name_edit  # renamed by the user
     edit.setText("first")
@@ -305,7 +305,7 @@ def test_states_follow_a_rename(qtbot, bt):
 
 def test_states_follow_a_move(bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     bt.MoveEntry("a", 2)
     assert_view_in_order(view, ["b", "c", "a"])
     assert not view.row("a").move_down_button.isEnabled() and view.row("a").move_up_button.isEnabled()
@@ -314,28 +314,28 @@ def test_states_follow_a_move(bt):
 
 def test_states_follow_a_change_of_type(bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     old_row = view.row("b")
-    bt.blackboardStore().replace("b", "String", "text")
+    bt.blackboard_store().replace("b", "String", "text")
     new_row = view.row("b")
     assert new_row is not old_row and new_row.type_name == "String"
     assert_view_in_order(view, ["a", "b", "c"])
     assert new_row.move_up_button.isEnabled() and new_row.move_down_button.isEnabled()
-    bt.blackboardStore().replace("c", "List", [1])
+    bt.blackboard_store().replace("c", "List", [1])
     assert_view_in_order(view, ["a", "b", "c"])
     assert not view.row("c").move_down_button.isEnabled()
 
 
 def test_states_follow_entries_added_from_a_worker_thread(qtbot, bt):
     add_entries(bt, "a", "b")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     run_in_thread(lambda: bt.AddEntry("c", "Integer", 2))
     wait_view_in_order(qtbot, view, ["a", "b", "c"])
 
 
 def test_a_move_before_the_row_of_a_worker_thread_entry_exists(qtbot, bt):
     add_entries(bt, "a", "b")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     run_in_thread(lambda: bt.AddEntry("x", "Integer", 9))  # its row is created when the queued signal arrives
     assert bt.MoveEntry("x", -2) == 0
     wait_view_in_order(qtbot, view, ["x", "a", "b"])
@@ -345,18 +345,18 @@ def test_a_move_before_the_row_of_a_worker_thread_entry_exists(qtbot, bt):
 def test_clicking_the_down_arrow_moves_the_entry_down(qtbot, bt):
     add_entries(bt, "a", "b", "c")
     click_arrow(qtbot, bt, "a", "down")
-    assert_view_in_order(bt.blackboardView(), ["b", "a", "c"])
+    assert_view_in_order(bt.blackboard_view(), ["b", "a", "c"])
 
 
 def test_clicking_the_up_arrow_moves_the_entry_up(qtbot, bt):
     add_entries(bt, "a", "b", "c")
     click_arrow(qtbot, bt, "c", "up")
-    assert_view_in_order(bt.blackboardView(), ["a", "c", "b"])
+    assert_view_in_order(bt.blackboard_view(), ["a", "c", "b"])
 
 
 def test_clicking_a_disabled_arrow_does_nothing(qtbot, bt):
     add_entries(bt, "a", "b")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     edited = []
     view.entryEdited.connect(edited.append)
     click_arrow(qtbot, bt, "a", "up")
@@ -367,7 +367,7 @@ def test_clicking_a_disabled_arrow_does_nothing(qtbot, bt):
 
 def test_repeated_clicks_move_an_entry_to_the_other_end(qtbot, bt):
     add_entries(bt, "a", "b", "c", "d")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     for _ in range(5):  # one click more than needed: the arrow is disabled at the bottom
         click_arrow(qtbot, bt, "a", "down")
     assert_view_in_order(view, ["b", "c", "d", "a"])
@@ -378,7 +378,7 @@ def test_repeated_clicks_move_an_entry_to_the_other_end(qtbot, bt):
 
 def test_rows_are_shown_in_the_new_order(qtbot, bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     click_arrow(qtbot, bt, "c", "up")
     click_arrow(qtbot, bt, "c", "up")
 
@@ -392,7 +392,7 @@ def test_rows_are_shown_in_the_new_order(qtbot, bt):
 def test_a_moved_row_keeps_its_widgets_value_flag_and_selection(qtbot, bt):
     bt.AddEntry("a", "Integer", 1)
     bt.AddEntry("b", "String", "bee", reset=True)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     row = view.row("b")
     row.select_box.setChecked(True)
     click_arrow(qtbot, bt, "b", "up")
@@ -405,7 +405,7 @@ def test_a_moved_row_keeps_its_widgets_value_flag_and_selection(qtbot, bt):
 
 def test_a_name_being_edited_survives_a_click_on_an_arrow(qtbot, bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     show_blackboard(qtbot, bt)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
@@ -423,7 +423,7 @@ def test_a_name_being_edited_survives_a_click_on_an_arrow(qtbot, bt):
 def test_clicking_emits_entry_edited(qtbot, bt):
     add_entries(bt, "a", "b")
     edited = []
-    bt.blackboardView().entryEdited.connect(edited.append)
+    bt.blackboard_view().entryEdited.connect(edited.append)
     click_arrow(qtbot, bt, "b", "up")
     assert edited == ["b"]
 
@@ -435,7 +435,7 @@ def test_move_entry_returns_the_new_index(bt):
     assert bt.GetEntryNames() == ["b", "a", "c"]
     assert bt.MoveEntry("a", -1) == 0
     assert bt.GetEntryNames() == ["a", "b", "c"]
-    assert_view_in_order(bt.blackboardView(), ["a", "b", "c"])
+    assert_view_in_order(bt.blackboard_view(), ["a", "b", "c"])
 
 
 def test_move_entry_several_places(bt):
@@ -446,7 +446,7 @@ def test_move_entry_several_places(bt):
     assert bt.GetEntryNames() == ["e", "b", "c", "d", "a"]
     assert bt.MoveEntry("c", 2) == 4
     assert bt.GetEntryNames() == ["e", "b", "d", "a", "c"]
-    assert_view_in_order(bt.blackboardView(), ["e", "b", "d", "a", "c"])
+    assert_view_in_order(bt.blackboard_view(), ["e", "b", "d", "a", "c"])
 
 
 @pytest.mark.parametrize(
@@ -464,11 +464,11 @@ def test_move_entry_several_places(bt):
 def test_move_entry_stops_at_either_end(bt, name, offset, index, order):
     add_entries(bt, "a", "b", "c")
     reordered = []
-    bt.blackboardStore().entriesReordered.connect(lambda: reordered.append(True))
+    bt.blackboard_store().entriesReordered.connect(lambda: reordered.append(True))
     assert bt.MoveEntry(name, offset) == index
     assert bt.GetEntryNames() == order
     assert len(reordered) == (0 if order == ["a", "b", "c"] else 1)
-    assert_view_in_order(bt.blackboardView(), order)
+    assert_view_in_order(bt.blackboard_view(), order)
 
 
 def test_move_entry_with_a_single_entry(bt):
@@ -538,7 +538,7 @@ def test_store_move_keeps_values_types_and_flags(store):
 # ============================================================================ entryEdited
 def test_view_move_entry_emits_entry_edited_only_when_the_entry_moved(bt):
     add_entries(bt, "a", "b", "c")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     edited = []
     view.entryEdited.connect(edited.append)
     assert view.move_entry("a", -1) == 0
@@ -554,7 +554,7 @@ def test_view_move_entry_emits_entry_edited_only_when_the_entry_moved(bt):
 
 def test_view_move_entry_of_a_missing_entry(bt):
     add_entries(bt, "a", "b")
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     edited = []
     view.entryEdited.connect(edited.append)
     assert view.move_entry("missing", 1) == -1
@@ -567,7 +567,7 @@ def test_view_move_entry_of_a_missing_entry(bt):
 def test_api_moves_do_not_emit_entry_edited(bt):
     add_entries(bt, "a", "b")
     edited = []
-    bt.blackboardView().entryEdited.connect(edited.append)
+    bt.blackboard_view().entryEdited.connect(edited.append)
     bt.MoveEntry("b", -1)
     assert edited == []
 
@@ -645,7 +645,7 @@ def test_the_order_is_kept_when_the_tree_is_loaded_again(make_widget, bt):
     assert other.GetEntryNames() == order
     assert [other.GetEntry(name) for name in order] == [4.5, "bee", 1, [3]]
     assert other.GetEntryReset("b")
-    assert_view_in_order(other.blackboardView(), order)
+    assert_view_in_order(other.blackboard_view(), order)
     assert not other.IsModified()
 
 
@@ -657,7 +657,7 @@ def test_loading_the_same_tree_right_after_a_move_keeps_the_order(bt):
     assert bt.LoadTree(bt.GetFilePath())
     assert bt.GetEntryNames() == ["c", "a", "b"]
     assert file_names(bt) == ["c", "a", "b"]
-    assert_view_in_order(bt.blackboardView(), ["c", "a", "b"])
+    assert_view_in_order(bt.blackboard_view(), ["c", "a", "b"])
 
 
 def test_loading_a_tree_puts_the_entries_of_the_widget_in_the_file_order(make_widget, bt, tmp_path):
@@ -668,7 +668,7 @@ def test_loading_a_tree_puts_the_entries_of_the_widget_in_the_file_order(make_wi
     assert other.NewTree(str(tmp_path / "other.json"))
     add_entries(other, "a", "b", "c")
     assert other.LoadTree(str(tmp_path / "moved_BT.json"))
-    assert_view_in_order(other.blackboardView(), ["b", "c", "a"])
+    assert_view_in_order(other.blackboard_view(), ["b", "c", "a"])
 
 
 def test_save_as_writes_the_order(bt, tmp_path):
@@ -688,7 +688,7 @@ def test_before_a_tree_exists_a_move_marks_the_tree_modified(make_widget, tmp_pa
     assert widget.IsModified()
     assert widget.GetBlackboardFilePath() is None
     widget._set_modified(False)
-    widget.blackboardView().row("a").move_down_button.click()  # the user moves an entry
+    widget.blackboard_view().row("a").move_down_button.click()  # the user moves an entry
     assert widget.IsModified()
     assert widget.GetEntryNames() == ["c", "a", "b"]
     assert widget.SaveTree(str(tmp_path / "later"))
@@ -709,7 +709,7 @@ def test_moving_while_the_tree_runs(qtbot, tree):
         click_arrow(qtbot, tree, "b", "up")
         assert tree.MoveEntry("b", -1) == 0
         assert tree.IsExecuting()
-        assert_view_in_order(tree.blackboardView(), ["b", "count", "a"])
+        assert_view_in_order(tree.blackboard_view(), ["b", "count", "a"])
         qtbot.waitUntil(lambda: file_names(tree) == ["b", "count", "a"], timeout=3000)  # written while running
         qtbot.waitUntil(lambda: tree.GetEntry("count") >= 6, timeout=5000)  # the tree keeps running
     finally:
@@ -734,7 +734,7 @@ def test_without_restore_blackboard_a_move_during_a_run_is_kept(qtbot, tree, end
         assert tree.GetEntry("count") >= 2  # values are kept too
     finally:
         tree.Stop()
-    assert_view_in_order(tree.blackboardView(), ["b", "count", "a"])
+    assert_view_in_order(tree.blackboard_view(), ["b", "count", "a"])
     assert_blackboard_in_file(tree)
     assert file_names(tree) == ["b", "count", "a"]
 
@@ -756,7 +756,7 @@ def test_with_restore_blackboard_stop_undoes_a_move_clicked_during_the_run(qtbot
     tree.Stop()
     assert tree.GetEntryNames() == ["count", "a", "b"]  # the order of the run's start ...
     assert [tree.GetEntry(name) for name in ("count", "a", "b")] == [0, 1, "bee"]  # ... and its values
-    assert_view_in_order(tree.blackboardView(), ["count", "a", "b"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "a", "b"])
     assert_blackboard_in_file(tree)
     assert file_blackboard(tree.GetFilePath()) == [
         {"name": "count", "type": "Integer", "value": 0},
@@ -775,7 +775,7 @@ def test_with_restore_blackboard_stop_undoes_an_api_move_during_the_run(qtbot, t
     tree.MoveEntry("count", 3)
     tree.Stop()
     assert tree.GetEntry("count") == 0
-    assert_view_in_order(tree.blackboardView(), ["count", "a", "b", "c"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "a", "b", "c"])
     assert_blackboard_in_file(tree)
     assert file_names(tree) == ["count", "a", "b", "c"]
 
@@ -795,7 +795,7 @@ def test_with_restore_blackboard_stop_restores_the_snapshot_order_after_moves_re
     order = ["count", "a", "b", "c"]  # x is gone, a is back, the order of the run's start
     assert tree.GetEntryNames() == order
     assert [tree.GetEntry(name) for name in order] == [0, 1, 2, 3]
-    assert_view_in_order(tree.blackboardView(), order)
+    assert_view_in_order(tree.blackboard_view(), order)
     assert_blackboard_in_file(tree)
     assert file_names(tree) == order
 
@@ -811,7 +811,7 @@ def test_with_restore_blackboard_reset_while_running_undoes_a_move(qtbot, tree):
         tree.Reset()
         assert tree.IsExecuting()
         assert tree.GetEntryNames() == ["count", "a", "b"]
-        assert_view_in_order(tree.blackboardView(), ["count", "a", "b"])
+        assert_view_in_order(tree.blackboard_view(), ["count", "a", "b"])
         qtbot.waitUntil(lambda: tree.GetEntry("count") >= 2, timeout=5000)  # the new loop runs
         tree.MoveEntry("a", 1)  # a move in the run that goes on after Reset ...
         assert tree.GetEntryNames() == ["count", "b", "a"]
@@ -819,7 +819,7 @@ def test_with_restore_blackboard_reset_while_running_undoes_a_move(qtbot, tree):
         tree.Stop()
     assert tree.GetEntryNames() == ["count", "a", "b"]  # ... is undone by Stop
     assert tree.GetEntry("count") == 0
-    assert_view_in_order(tree.blackboardView(), ["count", "a", "b"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "a", "b"])
 
 
 def test_with_restore_blackboard_a_move_while_paused_is_undone_by_stop(qtbot, tree):
@@ -838,7 +838,7 @@ def test_with_restore_blackboard_a_move_while_paused_is_undone_by_stop(qtbot, tr
     tree.Stop()
     assert tree.GetEntryNames() == ["count", "a", "b"]
     assert tree.GetEntry("count") == 0
-    assert_view_in_order(tree.blackboardView(), ["count", "a", "b"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "a", "b"])
 
 
 def test_with_restore_blackboard_reset_after_a_run_undoes_a_move_made_by_the_tree(qtbot, tree):
@@ -847,10 +847,10 @@ def test_with_restore_blackboard_reset_after_a_run_undoes_a_move_made_by_the_tre
     chain(tree, "ThreadedMover")
     tree.Execute()
     run_until_idle(qtbot, tree)
-    wait_view_in_order(qtbot, tree.blackboardView(), ["c", "a", "b"])  # a run-once keeps its result ...
+    wait_view_in_order(qtbot, tree.blackboard_view(), ["c", "a", "b"])  # a run-once keeps its result ...
     tree.Reset()
     assert tree.GetEntryNames() == ["a", "b", "c"]  # ... until Reset restores the blackboard
-    assert_view_in_order(tree.blackboardView(), ["a", "b", "c"])
+    assert_view_in_order(tree.blackboard_view(), ["a", "b", "c"])
 
 
 def test_with_restore_blackboard_a_click_while_idle_after_a_run_persists(qtbot, tree):
@@ -865,7 +865,7 @@ def test_with_restore_blackboard_a_click_while_idle_after_a_run_persists(qtbot, 
     tree.Reset()
     assert tree.GetEntryNames() == ["count", "b", "a"]
     assert tree.GetEntry("count") == 1  # the restore snapshot was discarded
-    assert_view_in_order(tree.blackboardView(), ["count", "b", "a"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "b", "a"])
     tree.Stop()
     assert tree.GetEntryNames() == ["count", "b", "a"]
     assert_blackboard_in_file(tree)
@@ -893,7 +893,7 @@ def test_with_restore_blackboard_an_api_move_while_idle_after_a_run_persists(qtb
     tree.MoveEntry("b", -1)
     tree.Reset()
     assert tree.GetEntryNames() == ["count", "b", "a"]
-    assert_view_in_order(tree.blackboardView(), ["count", "b", "a"])
+    assert_view_in_order(tree.blackboard_view(), ["count", "b", "a"])
 
 
 def test_with_restore_blackboard_a_move_before_the_run_is_its_start_order(qtbot, tree):
@@ -906,7 +906,7 @@ def test_with_restore_blackboard_a_move_before_the_run_is_its_start_order(qtbot,
     tree.MoveEntry("b", 2)
     tree.Stop()
     assert tree.GetEntryNames() == ["b", "count", "a"]
-    assert_view_in_order(tree.blackboardView(), ["b", "count", "a"])
+    assert_view_in_order(tree.blackboard_view(), ["b", "count", "a"])
 
 
 def test_a_node_on_a_worker_thread_can_move_entries(qtbot, tree):
@@ -916,7 +916,7 @@ def test_a_node_on_a_worker_thread_can_move_entries(qtbot, tree):
     tree.Execute()
     run_until_idle(qtbot, tree)
     assert ThreadedMover.results == [(False, 0)]
-    wait_view_in_order(qtbot, tree.blackboardView(), ["c", "a", "b"])
+    wait_view_in_order(qtbot, tree.blackboard_view(), ["c", "a", "b"])
     assert_blackboard_in_file(tree)
     assert file_names(tree) == ["c", "a", "b"]
 
@@ -929,7 +929,7 @@ def test_moving_from_a_worker_thread(qtbot, bt):
     run_in_thread(lambda: results.append(bt.MoveEntry("c", -2)))
     assert results == [0]
     assert bt.GetEntryNames() == ["c", "a", "b"]  # the store changed at once
-    wait_view_in_order(qtbot, bt.blackboardView(), ["c", "a", "b"])
+    wait_view_in_order(qtbot, bt.blackboard_view(), ["c", "a", "b"])
     assert_blackboard_in_file(bt)
     assert file_names(bt) == ["c", "a", "b"]
 
@@ -958,7 +958,7 @@ def test_moves_from_several_threads_at_once(qtbot, bt):
     assert errors == []
     final = bt.GetEntryNames()
     assert sorted(final) == sorted(names)
-    wait_view_in_order(qtbot, bt.blackboardView(), final)
+    wait_view_in_order(qtbot, bt.blackboard_view(), final)
 
 
 def test_store_moves_from_threads_keep_every_entry(store):
@@ -1026,19 +1026,19 @@ def test_store_restore_after_moves_removals_renames_and_additions(store):
 
 def test_restore_puts_the_view_back_in_the_snapshot_order(bt):
     add_entries(bt, "a", "b", "c")
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     snapshot = store.snapshot()
     bt.MoveEntry("a", 2)  # b, c, a
     bt.RemoveEntry("c")
     store.restore(snapshot)
-    assert_view_in_order(bt.blackboardView(), ["a", "b", "c"])
+    assert_view_in_order(bt.blackboard_view(), ["a", "b", "c"])
 
 
 # ============================================================================ texts
 @pytest.mark.parametrize("type_name", list(ENTRY_TYPES))
 def test_every_entry_row_says_resets(bt, type_name):
     bt.AddEntry("entry", type_name, SAMPLE_VALUES[type_name])
-    box = bt.blackboardView().row("entry").reset_box
+    box = bt.blackboard_view().row("entry").reset_box
     assert isinstance(box, QCheckBox)
     assert box.text() == "Resets"
     assert box.toolTip().startswith("Resets")
@@ -1047,14 +1047,14 @@ def test_every_entry_row_says_resets(bt, type_name):
 def test_a_ui_file_without_the_check_box_gets_one_saying_resets(monkeypatch, bt, tmp_path):
     strip_from_entry_ui(monkeypatch, tmp_path, "Reset")
     bt.AddEntry("entry", "Integer", 1)
-    box = bt.blackboardView().row("entry").reset_box
+    box = bt.blackboard_view().row("entry").reset_box
     assert box.objectName() == "Reset" and box.text() == "Resets"
     box.setChecked(True)
     assert bt.GetEntryReset("entry")
 
 
 def test_the_header_names_the_resets_and_order_columns(qtbot, bt):
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     resets = view.findChild(QLabel, "LabelEntryReset")
     order = view.findChild(QLabel, "LabelEntryOrder")
     assert resets is not None and resets.text() == "Resets"
@@ -1069,7 +1069,7 @@ def test_the_header_names_the_resets_and_order_columns(qtbot, bt):
 def test_the_arrows_sit_after_the_resets_box(qtbot, bt):
     add_entries(bt, "a", "b")
     show_blackboard(qtbot, bt)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     row = view.row("a")
     qtbot.waitUntil(lambda: row.move_up_button.isVisible(), timeout=2000)
 
@@ -1085,7 +1085,7 @@ def test_the_flag_api_and_file_key_are_unchanged(bt):
     assert bt.GetEntryReset("b")
     bt.MoveEntry("b", -1)
     assert bt.GetEntryReset("b") and not bt.GetEntryReset("a")
-    assert bt.blackboardView().row("b").reset_box.isChecked()
+    assert bt.blackboard_view().row("b").reset_box.isChecked()
     assert_blackboard_in_file(bt)
     assert file_blackboard(bt.GetFilePath()) == [
         {"name": "b", "type": "Integer", "value": 1, "reset": True},

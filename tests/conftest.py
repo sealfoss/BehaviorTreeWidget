@@ -365,7 +365,7 @@ def assert_blackboard_in_file(bt: BehaviorTreeWidget, timeout: float = 3.0) -> N
     deadline = time.monotonic() + timeout
     while True:
         QApplication.processEvents()
-        if file_blackboard(bt.GetFilePath()) == bt.blackboardStore().to_list(quiet=True):
+        if file_blackboard(bt.GetFilePath()) == bt.blackboard_store().to_list(quiet=True):
             break
         assert time.monotonic() < deadline, "the blackboard was not written to the blackboard file"
         time.sleep(0.01)

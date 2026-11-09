@@ -518,7 +518,7 @@ def describe(widget) -> dict:
     return {
         "nodes": nodes,
         "blackboard": [(name, widget.GetEntryType(name), widget.GetEntry(name)) for name in widget.GetEntryNames()],
-        "rows": [row.name for row in widget.blackboardView().rows()],
+        "rows": [row.name for row in widget.blackboard_view().rows()],
         "file": widget.GetFilePath(),
         "modified": widget.IsModified(),
         "title": widget.window().windowTitle(),
@@ -539,7 +539,7 @@ def view_rows_in_layout(view) -> list[str]:
 def assert_view_matches_store(qtbot, bt) -> None:
     """Every entry has exactly one visible, current row, in store order; no stale rows remain."""
     qtbot.wait(20)  # let deleteLater() of retired rows run
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     names = bt.GetEntryNames()
     assert view_rows_in_layout(view) == names
     for name in names:
@@ -1628,7 +1628,7 @@ def test_set_entry_with_uncopyable_container_creates_object_entry(qtbot, bt, fac
     bt.SetEntry(value, "locks")
     assert bt.GetEntryType("locks") == "Object"
     assert bt.GetEntry("locks") is value
-    row = bt.blackboardView().row("locks")
+    row = bt.blackboard_view().row("locks")
     assert row is not None and row.type_name == "Object"
     assert row.value_widget.isReadOnly()
 
@@ -1656,8 +1656,8 @@ def test_dispose_clears_rows_and_later_writes_raise(qtbot, bt):
     for index, name in enumerate(["a", "b", "c"]):
         bt.SetEntry(index, name)
     bt.SetEntry([1, 2], "items")
-    view = bt.blackboardView()
-    store = bt.blackboardStore()
+    view = bt.blackboard_view()
+    store = bt.blackboard_store()
     removed = []
     store.entryRemoved.connect(removed.append)
     bt.setCurrentIndex(1)
@@ -1693,7 +1693,7 @@ def test_shutdown_disposes_and_view_is_cleared(qtbot, bt):
     ns = bt.GetBlackboardNamespace()
     bt.Shutdown()
     qtbot.wait(20)
-    assert bt.blackboardView().rows() == []
+    assert bt.blackboard_view().rows() == []
     assert not [key for key in py_trees.blackboard.Blackboard.storage if key.startswith(ns + "/")]
     with pytest.raises(RuntimeError):
         bt.SetEntry(2, "a")
@@ -1706,7 +1706,7 @@ def _focus_uncommitted_rename(qtbot, bt, name="x"):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    row = bt.blackboardView().row(name)
+    row = bt.blackboard_view().row(name)
     row.name_edit.setFocus()
     qtbot.waitUntil(row.name_edit.hasFocus, timeout=1000)
     row.name_edit.selectAll()
@@ -1722,10 +1722,10 @@ def _worker(action):
 
 
 CHANGES_WHILE_RENAMING = {
-    "retype_gui": lambda bt: bt.blackboardStore().replace("x", "String", "hello"),
+    "retype_gui": lambda bt: bt.blackboard_store().replace("x", "String", "hello"),
     "remove_gui": lambda bt: bt.RemoveEntry("x"),
     "remove_then_set_gui": lambda bt: (bt.RemoveEntry("x"), bt.SetEntry("hello", "x")),
-    "retype_worker": lambda bt: _worker(lambda: bt.blackboardStore().replace("x", "Bool", True)),
+    "retype_worker": lambda bt: _worker(lambda: bt.blackboard_store().replace("x", "Bool", True)),
     "remove_worker": lambda bt: _worker(lambda: bt.RemoveEntry("x")),
     "remove_then_set_worker": lambda bt: _worker(lambda: (bt.RemoveEntry("x"), bt.SetEntry("hello", "x"))),
 }
@@ -1750,7 +1750,7 @@ def test_entry_changed_while_its_name_editor_has_uncommitted_text(qtbot, bt, err
         bt.RemoveEntry("x")
         bt.SetEntry(3.5, "x")
     assert_view_matches_store(qtbot, bt)
-    row = bt.blackboardView().row("x")
+    row = bt.blackboard_view().row("x")
     assert row.isVisible()
     QToolTip.hideText()
 
@@ -1794,7 +1794,7 @@ def _when(condition, action):
 def test_entry_removed_while_edit_dialog_is_open(qtbot, bt, dialogs, error_records, remover, outcome):
     bt.AddEntry("items", "List", [1, 2])
     bt.setCurrentIndex(1)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     row = view.row("items")
     info = {}
     keep = []
@@ -1834,12 +1834,12 @@ def test_entry_removed_while_edit_dialog_is_open(qtbot, bt, dialogs, error_recor
 def test_entry_retyped_while_edit_dialog_is_open(qtbot, bt, dialogs, error_records):
     bt.AddEntry("items", "List", [1, 2])
     bt.setCurrentIndex(1)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     keep = []
 
     def handler(dialog):
         def during():
-            bt.blackboardStore().replace("items", "String", "now a string")
+            bt.blackboard_store().replace("items", "String", "now a string")
 
             def finish():
                 dialog.text_edit.setText("[7, 8]")
@@ -1873,7 +1873,7 @@ def test_entry_retyped_while_edit_dialog_is_open(qtbot, bt, dialogs, error_recor
 def test_edit_dialog_accepts_nan_and_inf(qtbot, bt, dialogs, type_name, text, check):
     bt.AddEntry("values", type_name)
     bt.setCurrentIndex(1)
-    row = bt.blackboardView().row("values")
+    row = bt.blackboard_view().row("values")
     result = {}
 
     def handler(dialog):
@@ -1911,7 +1911,7 @@ def test_typing_into_double_entry_spin_box_is_not_reformatted(qtbot, bt):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    spin = bt.blackboardView().row("d").value_widget
+    spin = bt.blackboard_view().row("d").value_widget
     assert isinstance(spin, QDoubleSpinBox)
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus, timeout=1000)
@@ -1932,7 +1932,7 @@ def test_typing_into_integer_entry_spin_box(qtbot, bt):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    spin = bt.blackboardView().row("i").value_widget
+    spin = bt.blackboard_view().row("i").value_widget
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus, timeout=1000)
     spin.selectAll()
@@ -1942,7 +1942,7 @@ def test_typing_into_integer_entry_spin_box(qtbot, bt):
 
 def test_value_set_from_code_still_updates_spin_box(qtbot, bt):
     bt.AddEntry("d", "Double", 0.0)
-    spin = bt.blackboardView().row("d").value_widget
+    spin = bt.blackboard_view().row("d").value_widget
     bt.SetEntry(3.25, "d")
     assert spin.value() == 3.25
     _worker(lambda: bt.SetEntry(-1.5, "d"))
@@ -1952,8 +1952,8 @@ def test_value_set_from_code_still_updates_spin_box(qtbot, bt):
 def test_restore_keeps_snapshot_order_in_the_view(qtbot, bt):
     for index, name in enumerate(["a", "b", "c"]):
         bt.SetEntry(index, name)
-    store = bt.blackboardStore()
-    view = bt.blackboardView()
+    store = bt.blackboard_store()
+    view = bt.blackboard_view()
     snapshot = store.snapshot()
     store.remove("a")
     bt.SetEntry(10, "a")
@@ -1986,11 +1986,11 @@ def test_reset_restores_blackboard_order_after_run_once(qtbot, lbt):
     lbt.Reset()
     assert lbt.GetEntryNames() == ["a", "b", "c"]
     assert [lbt.GetEntry(n) for n in "abc"] == [0, 1, 2]
-    assert view_rows_in_layout(lbt.blackboardView()) == ["a", "b", "c"]
+    assert view_rows_in_layout(lbt.blackboard_view()) == ["a", "b", "c"]
 
 
 def test_store_changed_signal_runtime_flag(qtbot, bt, executing):
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     flags = []
     store.changed.connect(flags.append)
     bt.SetEntry(1, "while_running")
@@ -2012,7 +2012,7 @@ def test_parse_list_validates_without_changing_and_reports_duplicates(bt):
         {"name": "b", "type": "Nope", "value": 1},
         {"name": "c", "type": "Double", "value": 1.5},
     ]
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     entries, problems = store.parse_list(items)
     assert entries == [("a", "Integer", 5), ("c", "Double", 1.5)]
     assert len(problems) == 2
@@ -2025,7 +2025,7 @@ def test_load_list_replace_keeps_object_entries(bt):
     bt.SetEntry(handle, "handle")
     bt.SetEntry(1, "old")
     bt.SetEntry(2, "kept")
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     problems = store.load_list([{"name": "kept", "type": "Integer", "value": 20}, {"name": "new", "type": "String", "value": "n"}], replace=True)
     assert problems == []
     assert bt.GetEntryNames() == ["handle", "kept", "new"]
@@ -2386,7 +2386,7 @@ def test_close_top_level_widget_stops_but_does_not_shut_down(qtbot, bt, dialogs,
     assert bt.close()
     assert not bt.IsExecuting()
     assert SlowCancelable.cancelled.wait(2)
-    assert not bt.blackboardStore().is_disposed()
+    assert not bt.blackboard_store().is_disposed()
     bt.SetEntry(1, "still_writable")
     bt.show()
     qtbot.waitExposed(bt)
@@ -2412,7 +2412,7 @@ def test_close_with_delete_on_close_shuts_down(qtbot, tmp_path, dialogs):
     slow = widget.AddNode("SlowCancelable", 0, 200)
     widget.Connect(widget.GetRootNode(), slow)
     widget.SetEntry(1, "a")
-    store = widget.blackboardStore()
+    store = widget.blackboard_store()
     ns = widget.GetBlackboardNamespace()
     fast_config(widget)
     widget.Execute()
@@ -2446,7 +2446,7 @@ def _destroy_without_shutdown(qtbot, tmp_path, with_entries: bool):
         widget.SetEntry(1, "a")
         widget.SetEntry([1, 2], "items")
     ns = widget.GetBlackboardNamespace()
-    client_name = widget.blackboardStore().client().unique_identifier
+    client_name = widget.blackboard_store().client().unique_identifier
     fast_config(widget)
     widget.Execute()
     qtbot.waitUntil(lambda: slow.GetStatus() is NodeStatus.RUNNING, timeout=3000)

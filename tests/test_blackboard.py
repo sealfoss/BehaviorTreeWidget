@@ -92,8 +92,8 @@ def store(qapp):
 @pytest.fixture
 def view(bt):
     """The BlackboardView of the ``bt`` widget, made the current tab."""
-    bt.setCurrentIndex(bt.indexOf(bt.blackboardView()))
-    return bt.blackboardView()
+    bt.setCurrentIndex(bt.indexOf(bt.blackboard_view()))
+    return bt.blackboard_view()
 
 
 def storage_keys(namespace: str) -> set[str]:
@@ -467,7 +467,7 @@ def test_duplicate_names_are_rejected(store):
 
 @pytest.mark.parametrize("name", CLIENT_ATTRIBUTE_NAMES)
 def test_names_colliding_with_py_trees_client_attributes(bt, name):
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     client = store.client()
     bt.SetEntry(1, name)
     assert bt.HasEntry(name)
@@ -495,7 +495,7 @@ def test_unicode_and_space_names(bt, view, name):
     bt.SetEntry(3.5, name)
     assert bt.GetEntry(name) == 3.5
     assert bt.GetEntryType(name) == "Double"
-    assert Blackboard.storage[bt.blackboardStore().key(name)] == 3.5
+    assert Blackboard.storage[bt.blackboard_store().key(name)] == 3.5
     row = view.row(name)
     assert row is not None
     assert row.name_edit.text() == name
@@ -693,7 +693,7 @@ def test_get_entry_returns_copies_of_containers(bt, value):
     else:
         first.add(99)
     assert bt.GetEntry("container") == value
-    assert Blackboard.storage[bt.blackboardStore().key("container")] == value
+    assert Blackboard.storage[bt.blackboard_store().key("container")] == value
 
 
 def test_set_entry_copies_the_given_container(bt):
@@ -945,11 +945,11 @@ def test_two_widgets_do_not_share_entries(make_widget):
     assert second.GetEntryType("shared_name") == "String"
     assert not second.HasEntry("only_first")
     assert second.GetEntryNames() == ["shared_name"]
-    assert first.blackboardView().row("only_first") is not None
-    assert second.blackboardView().row("only_first") is None
+    assert first.blackboard_view().row("only_first") is not None
+    assert second.blackboard_view().row("only_first") is None
     first.Shutdown()
     assert second.GetEntry("shared_name") == "two"
-    assert Blackboard.storage[second.blackboardStore().key("shared_name")] == "two"
+    assert Blackboard.storage[second.blackboard_store().key("shared_name")] == "two"
 
 
 # ============================================================================ widget-level API
@@ -969,7 +969,7 @@ def test_widget_blackboard_api(bt):
     assert bt.HasEntry("greeting") and not bt.HasEntry("missing")
     bt.RemoveEntry("ratio")
     assert bt.GetEntryNames() == ["count", "flags", "thing", "greeting"]
-    assert bt.GetBlackboardNamespace() == bt.blackboardStore().namespace()
+    assert bt.GetBlackboardNamespace() == bt.blackboard_store().namespace()
 
 
 def test_widget_blackboard_api_errors(bt):
@@ -1156,7 +1156,7 @@ def test_node_writes_from_worker_thread_during_execution(qtbot, bt, view, tmp_pa
 def test_worker_thread_rename_and_retype_update_view(qtbot, bt, view):
     bt.AddEntry("first", "Integer", 1)
     bt.AddEntry("second", "Integer", 2)
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
 
     def work(_index):
         store.rename("first", "renamed")
@@ -1171,7 +1171,7 @@ def test_worker_thread_rename_and_retype_update_view(qtbot, bt, view):
 
 # ============================================================================ BlackboardView structure
 def test_blackboard_tab_contains_the_view(bt):
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     index = bt.indexOf(view)
     assert index >= 0
     assert bt.tabText(index) == "Blackboard"
@@ -1219,9 +1219,9 @@ def test_rows_appear_in_store_order(bt, view):
     for name in ["zeta", "alpha", "mid"]:
         bt.SetEntry(1, name)
     assert layout_names(view) == ["zeta", "alpha", "mid"]
-    bt.blackboardStore().rename("alpha", "beta")
+    bt.blackboard_store().rename("alpha", "beta")
     assert layout_names(view) == ["zeta", "beta", "mid"]
-    bt.blackboardStore().replace("zeta", "String", "now text")
+    bt.blackboard_store().replace("zeta", "String", "now text")
     assert layout_names(view) == ["zeta", "beta", "mid"]
     assert isinstance(view.row("zeta").value_widget, QLineEdit)
     bt.RemoveEntry("beta")
@@ -1449,7 +1449,7 @@ def test_remove_entries_removes_only_selected(bt, view, tmp_path):
     assert row_names(view) == ["a", "c"] and layout_names(view) == ["a", "c"]
     assert not any(row.is_selected() for row in view.rows())
     assert not view.select_all.isChecked()
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     assert storage_keys(store.namespace()) == {store.key("a"), store.key("c")}
     assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
@@ -1474,7 +1474,7 @@ def test_remove_entries_with_nothing_selected_is_a_no_op(bt, view, tmp_path):
 def test_retype_keeps_row_selection(bt, view):
     _make_rows(bt)
     view.row("b").select_box.click()
-    bt.blackboardStore().replace("b", "Bool", True)
+    bt.blackboard_store().replace("b", "Bool", True)
     row = view.row("b")
     assert row.type_name == "Bool"
     assert row.is_selected()
@@ -1566,7 +1566,7 @@ def test_entry_edited_signal_only_for_ui_edits(bt, view, dialogs):
     view.entryEdited.connect(edited.append)
     bt.SetEntry(1, "code")
     bt.SetEntry(2, "code")
-    bt.blackboardStore().rename("code", "code2")
+    bt.blackboard_store().rename("code", "code2")
     assert edited == []
     view.row("code2").value_widget.setValue(5)
     assert edited == ["code2"]
@@ -1580,7 +1580,7 @@ def test_rename_via_value_name(qtbot, bt, view, tmp_path):
     bt.AddEntry("old", "List", [1, 2])
     bt.AddEntry("c", "Integer", 3)
     mark_saved(bt, tmp_path)
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     old_key = store.key("old")
     row = view.row("old")
     row.name_edit.selectAll()

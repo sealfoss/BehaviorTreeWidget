@@ -180,7 +180,7 @@ def test_shutdown_during_a_tick_writes_the_reset_values(qtbot, bt):
     bt.Connect(bt.GetRootNode(), bt.AddNode("ShutdownFromOnRun", 0, 200))
     path = bt.GetFilePath()
     bt.Execute()
-    qtbot.waitUntil(lambda: bt.blackboardStore().is_disposed(), timeout=3000)
+    qtbot.waitUntil(lambda: bt.blackboard_store().is_disposed(), timeout=3000)
     assert file_blackboard(path)[0]["value"] == 1
 
 

@@ -56,7 +56,7 @@ from .subtree import SubTreeNodeWidget  # noqa: E402
 from .tree_log import LogLevel, TreeLogger, flush_logs  # noqa: E402
 from .widget import BehaviorTreeWidget, register_node_type, registered_node_types  # noqa: E402
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "BehaviorTreeWidget",

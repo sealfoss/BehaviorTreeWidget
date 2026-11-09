@@ -788,7 +788,7 @@ def test_evaluation_copy_follows_the_blackboard(bt):
     bt.view().setFocus()
     [copy] = copy_paste(bt)
     assert isinstance(copy, EvaluationNodeWidget)
-    bt.blackboardStore().rename("x", "y")
+    bt.blackboard_store().rename("x", "y")
     assert copy.GetValueName() == "y" and node.GetValueName() == "y"
 
 

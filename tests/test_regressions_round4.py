@@ -199,7 +199,7 @@ def test_user_edit_after_a_run_is_not_undone_by_reset(qtbot, widget):
     widget.Execute()
     run_until_idle(qtbot, widget)
     assert widget.GetEntry("x") == 1
-    row = widget.blackboardView().row("x")
+    row = widget.blackboard_view().row("x")
     row.value_widget.setValue(42)  # a deliberate edit in the Blackboard tab while idle
     widget.Reset()
     assert widget.GetEntry("x") == 42
@@ -294,7 +294,7 @@ class BrokenRepr:
 
 def test_object_entry_with_broken_repr_still_gets_a_row(widget):
     widget.SetEntry(BrokenRepr(), "broken")
-    row = widget.blackboardView().row("broken")
+    row = widget.blackboard_view().row("broken")
     assert row is not None
     assert "BrokenRepr" in row.value_widget.text()
 

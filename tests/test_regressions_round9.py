@@ -85,7 +85,7 @@ def test_a_pasted_decimal_comma_is_its_own_undo_step(qtbot, widget):
     widget.setCurrentIndex(1)
     widget.activateWindow()
     qtbot.waitUntil(widget.isActiveWindow, timeout=2000)
-    spin = widget.blackboardView().row("d").value_widget
+    spin = widget.blackboard_view().row("d").value_widget
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus, timeout=1000)
     QGuiApplication.clipboard().setText(",5")

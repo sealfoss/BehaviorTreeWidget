@@ -322,7 +322,7 @@ def test_widget_is_tab_widget_with_tree_and_blackboard_tabs(make_widget):
 def test_blackboard_tab_hosts_blackboard_view(make_widget):
     widget = make_widget()
     page = widget.widget(1)
-    assert page is widget.blackboardView()
+    assert page is widget.blackboard_view()
     assert isinstance(page, BlackboardView)
     assert page.findChild(QScrollArea, "EntryList") is not None
 
@@ -759,9 +759,9 @@ def test_save_skips_blackboard_values_that_cannot_be_saved(bt, caplog, dialogs, 
     bt.SetEntry(object(), "runtime_object")  # Object entries are run-time values, never saved
     bt.SetEntry([1, 2], "items")
     bt.SetEntry(4, "number")
-    with bt.blackboardStore()._lock:
+    with bt.blackboard_store()._lock:
         # A List whose value cannot be written as JSON (bytes) is skipped with a warning.
-        bt.blackboardStore()._client.set(bt.blackboardStore().key("items"), [b"raw"], overwrite=True)
+        bt.blackboard_store()._client.set(bt.blackboard_store().key("items"), [b"raw"], overwrite=True)
     with caplog.at_level("WARNING", logger="behavior_tree_widget"):
         assert bt.SaveTree(bt.GetFilePath()) is True
     entries = read_json(bt.GetBlackboardFilePath())["blackboard"]
@@ -1657,7 +1657,7 @@ def test_add_node_rejects_unknown_and_invalid_types(bt):
 # ============================================================================ Shutdown / independence
 def test_shutdown_is_idempotent_and_releases_blackboard_keys(bt):
     bt.SetEntry(1, "value")
-    key = bt.blackboardStore().key("value")
+    key = bt.blackboard_store().key("value")
     assert py_trees.blackboard.Blackboard.exists(key)
     bt.Shutdown()
     bt.Shutdown()

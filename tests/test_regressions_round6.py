@@ -217,7 +217,7 @@ def double_row(qtbot, widget):
         widget.setCurrentIndex(1)
         widget.activateWindow()
         qtbot.waitUntil(widget.isActiveWindow, timeout=2000)
-        spin = widget.blackboardView().row("d").value_widget
+        spin = widget.blackboard_view().row("d").value_widget
         assert isinstance(spin, FloatSpinBox)
         spin.setFocus()
         qtbot.waitUntil(spin.hasFocus, timeout=1000)

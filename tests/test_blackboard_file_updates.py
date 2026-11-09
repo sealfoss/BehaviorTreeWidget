@@ -56,13 +56,13 @@ def test_every_kind_of_change_is_written(bt):
     assert_blackboard_in_file(bt)
     bt.SetEntry(5, "a")
     assert_blackboard_in_file(bt)
-    bt.blackboardStore().rename("b", "items")
+    bt.blackboard_store().rename("b", "items")
     assert_blackboard_in_file(bt)
     assert [item["name"] for item in file_blackboard(bt.GetFilePath())] == ["a", "items"]
-    bt.blackboardStore().reorder(["items", "a"])
+    bt.blackboard_store().reorder(["items", "a"])
     assert_blackboard_in_file(bt)
     assert [item["name"] for item in file_blackboard(bt.GetFilePath())] == ["items", "a"]
-    bt.blackboardStore().replace("a", "String", "five")
+    bt.blackboard_store().replace("a", "String", "five")
     assert_blackboard_in_file(bt)
     bt.RemoveEntry("items")
     assert_blackboard_in_file(bt)
@@ -72,7 +72,7 @@ def test_every_kind_of_change_is_written(bt):
 def test_a_user_edit_in_the_blackboard_tab_is_written(bt):
     bt.AddEntry("counter", "Integer", 1)
     assert_blackboard_in_file(bt)
-    bt.blackboardView().row("counter").value_widget.setValue(42)
+    bt.blackboard_view().row("counter").value_widget.setValue(42)
     assert_blackboard_in_file(bt)
     assert file_blackboard(bt.GetFilePath()) == [entry("counter", "Integer", 42)]
 

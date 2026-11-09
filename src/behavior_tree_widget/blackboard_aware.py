@@ -212,7 +212,7 @@ class BlackboardAwareLeaf(LeafNodeWidget):
     # ------------------------------------------------------------------ blackboard
     def _on_added_to_tree(self) -> None:
         tree = self._tree
-        store = tree.blackboardStore() if tree is not None else None
+        store = tree.blackboard_store() if tree is not None else None
         if store is not None and store is not self._store:
             self._store = store
             # Structure changes only (not values); queued when they come from worker threads.

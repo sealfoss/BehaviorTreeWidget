@@ -85,7 +85,7 @@ def chain(bt, *types):
 @pytest.mark.parametrize("type_name", [name for name, spec in ENTRY_TYPES.items()])
 def test_every_entry_type_has_a_reset_check_box(bt, type_name):
     bt.AddEntry("entry", type_name, None if type_name != "Object" else object())
-    row = bt.blackboardView().row("entry")
+    row = bt.blackboard_view().row("entry")
     assert isinstance(row.reset_box, QCheckBox)
     assert row.reset_box.text() == "Resets"
     assert row.reset_box.isVisibleTo(row)
@@ -96,13 +96,13 @@ def test_every_entry_type_has_a_reset_check_box(bt, type_name):
 def test_the_header_names_the_reset_column(bt):
     from PySide6.QtWidgets import QLabel
 
-    label = bt.blackboardView().findChild(QLabel, "LabelEntryReset")
+    label = bt.blackboard_view().findChild(QLabel, "LabelEntryReset")
     assert label is not None and label.text() == "Resets"
 
 
 def test_checking_the_box_sets_the_flag(bt):
     bt.AddEntry("count", "Integer", 0)
-    box = bt.blackboardView().row("count").reset_box
+    box = bt.blackboard_view().row("count").reset_box
     box.setChecked(True)
     assert bt.GetEntryReset("count")
     box.setChecked(False)
@@ -112,18 +112,18 @@ def test_checking_the_box_sets_the_flag(bt):
 def test_the_box_follows_the_flag_set_from_code(qtbot, bt):
     bt.AddEntry("count", "Integer", 0)
     bt.SetEntryReset("count", True)
-    assert bt.blackboardView().row("count").reset_box.isChecked()
+    assert bt.blackboard_view().row("count").reset_box.isChecked()
     thread = threading.Thread(target=lambda: bt.SetEntryReset("count", False))
     thread.start()
     thread.join(5)
-    qtbot.waitUntil(lambda: not bt.blackboardView().row("count").reset_box.isChecked(), timeout=2000)
+    qtbot.waitUntil(lambda: not bt.blackboard_view().row("count").reset_box.isChecked(), timeout=2000)
     assert not bt.GetEntryReset("count")
 
 
 def test_add_entry_can_check_the_box(bt):
     bt.AddEntry("count", "Integer", 0, reset=True)
     assert bt.GetEntryReset("count")
-    assert bt.blackboardView().row("count").reset_box.isChecked()
+    assert bt.blackboard_view().row("count").reset_box.isChecked()
 
 
 def test_the_flag_needs_an_existing_entry(bt):
@@ -135,9 +135,9 @@ def test_the_flag_needs_an_existing_entry(bt):
 
 def test_the_flag_follows_a_renamed_entry_and_goes_with_a_removed_one(bt):
     bt.AddEntry("count", "Integer", 0, reset=True)
-    bt.blackboardStore().rename("count", "total")
+    bt.blackboard_store().rename("count", "total")
     assert bt.GetEntryReset("total")
-    assert bt.blackboardView().row("total").reset_box.isChecked()
+    assert bt.blackboard_view().row("total").reset_box.isChecked()
     bt.RemoveEntry("total")
     bt.AddEntry("total", "Integer", 0)
     assert not bt.GetEntryReset("total")
@@ -145,16 +145,16 @@ def test_the_flag_follows_a_renamed_entry_and_goes_with_a_removed_one(bt):
 
 def test_the_flag_survives_a_change_of_type(bt):
     bt.AddEntry("value", "Integer", 0, reset=True)
-    bt.blackboardStore().replace("value", "String", "text")
+    bt.blackboard_store().replace("value", "String", "text")
     assert bt.GetEntryReset("value")
-    assert bt.blackboardView().row("value").reset_box.isChecked()  # the new row shows it too
+    assert bt.blackboard_view().row("value").reset_box.isChecked()  # the new row shows it too
 
 
 # ============================================================================ saving
 def test_the_flag_is_written_to_the_blackboard_file(bt):
     bt.AddEntry("count", "Integer", 0)
     bt.AddEntry("other", "Integer", 0)
-    bt.blackboardView().row("count").reset_box.setChecked(True)
+    bt.blackboard_view().row("count").reset_box.setChecked(True)
     assert_blackboard_in_file(bt)
     with open(bt.GetBlackboardFilePath(), encoding="utf-8") as stream:
         items = json.load(stream)["blackboard"]
@@ -171,7 +171,7 @@ def test_the_flag_is_loaded(make_widget, bt, tmp_path):
     other = make_widget()
     assert other.LoadTree(str(tmp_path / "flags_BT.json"))
     assert other.GetEntryReset("count")
-    assert other.blackboardView().row("count").reset_box.isChecked()
+    assert other.blackboard_view().row("count").reset_box.isChecked()
 
 
 def test_store_parse_items_reads_the_flags():
@@ -350,7 +350,7 @@ def test_checking_the_box_during_a_loop_uses_the_loop_start_value(qtbot, tree):
     chain(tree, "Forever")
     tree.Execute()
     qtbot.waitUntil(lambda: tree.GetEntry("count") >= 3, timeout=5000)
-    tree.blackboardView().row("count").reset_box.setChecked(True)
+    tree.blackboard_view().row("count").reset_box.setChecked(True)
     tree.Stop()
     assert tree.GetEntry("count") == 0
 
@@ -371,7 +371,7 @@ def test_user_edits_during_a_loop_are_reset_too(qtbot, tree):
     chain(tree, "Forever")
     tree.Execute()
     qtbot.waitUntil(lambda: tree.GetEntry("count") >= 1, timeout=5000)
-    tree.blackboardView().row("mode").value_widget.setText("busy")
+    tree.blackboard_view().row("mode").value_widget.setText("busy")
     assert tree.GetEntry("mode") == "busy"
     tree.Stop()
     assert tree.GetEntry("mode") == "idle"
@@ -405,7 +405,7 @@ def test_a_renamed_entry_is_reset_under_its_new_name(qtbot, tree):
     tree.Execute()
     qtbot.waitUntil(lambda: tree.GetEntry("count") >= 2, timeout=5000)
     tree.Pause()
-    tree.blackboardStore().rename("count", "renamed")
+    tree.blackboard_store().rename("count", "renamed")
     tree.SetEntry(99, "renamed")
     tree.Stop()
     assert tree.GetEntry("renamed") == 0
@@ -417,7 +417,7 @@ def test_an_entry_retyped_during_the_loop_gets_its_type_back(qtbot, tree):
     chain(tree, "Forever")
     tree.Execute()
     qtbot.waitUntil(lambda: tree.GetEntry("count") >= 1, timeout=5000)
-    tree.blackboardStore().replace("value", "String", "three")
+    tree.blackboard_store().replace("value", "String", "three")
     tree.Stop()
     assert tree.GetEntryType("value") == "Integer" and tree.GetEntry("value") == 3
 
@@ -479,11 +479,11 @@ def test_no_capture_is_left_behind(qtbot, tree):
     chain(tree, "Bump")
     tree.Execute()
     run_until_idle(qtbot, tree)
-    assert not tree.blackboardStore().is_capturing()
+    assert not tree.blackboard_store().is_capturing()
     forever = chain(tree, "Forever")[0]
     tree.Execute()
     qtbot.waitUntil(lambda: forever.GetStatus().value == "Running", timeout=5000)
-    assert tree.blackboardStore().is_capturing()  # while a loop runs
+    assert tree.blackboard_store().is_capturing()  # while a loop runs
     tree.Stop()
     QApplication.processEvents()
-    assert not tree.blackboardStore().is_capturing()
+    assert not tree.blackboard_store().is_capturing()

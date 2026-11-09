@@ -195,7 +195,7 @@ class BoxNodeWidget(NodeWidget):
 
     DEFAULT_SIZE = (220, 120)
     MIN_SIZE = (60, 30)
-    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
+    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (geometry.SCENE_MARGIN)
     _handles: list[ResizeHandle] | tuple = ()  # until _create_handles (layout hooks run before it)
 
     def __init__(self, parent: QWidget | None = None):
@@ -342,7 +342,7 @@ class NotesNodeWidget(BoxNodeWidget):
 
     DEFAULT_SIZE = (220, 120)
     MIN_SIZE = (60, 30)
-    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
+    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (geometry.SCENE_MARGIN)
     PLACEHOLDER = "Click to write a note"
     _editor: _NoteEditor | None = None  # until __init__ creates it (layout hooks run before)
 

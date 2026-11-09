@@ -709,7 +709,7 @@ def test_on_run_receives_the_widget_and_can_use_the_blackboard(qtbot, bt, node_c
     assert leaf.trees == [bt]
     assert bt.GetEntry("output") == 42
     assert shown([root, leaf]) == [SUCCEEDED, SUCCEEDED]
-    qtbot.waitUntil(lambda: bt.blackboardView().row("output") is not None)
+    qtbot.waitUntil(lambda: bt.blackboard_view().row("output") is not None)
 
 
 # ============================================================================ errors
@@ -1288,7 +1288,7 @@ def test_blackboard_writes_by_running_nodes_do_not_mark_tree_modified(qtbot, bt,
     assert not bt.IsModified()
     bt.Execute()
     run_until_idle(qtbot, bt)
-    qtbot.waitUntil(lambda: bt.blackboardView().row("made_by_run") is not None)
+    qtbot.waitUntil(lambda: bt.blackboard_view().row("made_by_run") is not None)
     assert bt.GetEntry("x") == 2
     assert not bt.IsModified()
 

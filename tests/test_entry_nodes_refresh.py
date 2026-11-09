@@ -131,7 +131,7 @@ def test_removing_an_entry_updates_every_combo_box_at_once(nodes, bt):
 
 def test_renaming_an_entry_renames_rows_and_chosen_names(nodes, bt):
     evaluation, _, printer = nodes
-    bt.blackboardStore().rename("a", "alpha")
+    bt.blackboard_store().rename("a", "alpha")
     assert evaluation.GetValueName() == "alpha"
     assert printer.GetSource() == "alpha"
     assert texts(box(evaluation, "ValueName")) == ["alpha", "b", "c"]
@@ -144,7 +144,7 @@ def test_retyping_an_entry_updates_rows_and_their_tooltips(nodes, bt):
     evaluation, _, _ = nodes
     values = box(evaluation, "ValueName")
     assert tooltip(values, 1) == "Integer entry"
-    bt.blackboardStore().replace("b", "Double", 2.5)
+    bt.blackboard_store().replace("b", "Double", 2.5)
     assert tooltip(values, 1) == "Double entry"
     assert texts(box(evaluation, "CompareTo")) == ["Literal"]  # b is no longer an Integer entry
 
@@ -194,7 +194,7 @@ def test_missing_and_wrong_type_choices_are_shown_in_red(nodes, bt):
 # ============================================================================ batches
 def test_a_batch_refreshes_each_node_once_at_its_end(nodes, bt, refreshes):
     evaluation, setter, printer = nodes
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     with store.batch():
         bt.AddEntry("d", "Integer", 4)
         bt.AddEntry("e", "Integer", 5)
@@ -211,7 +211,7 @@ def test_a_batch_refreshes_each_node_once_at_its_end(nodes, bt, refreshes):
 
 def test_renames_inside_a_batch_are_followed_at_once(nodes, bt):
     evaluation, _, printer = nodes
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     with store.batch():
         store.rename("a", "alpha")
         assert evaluation.GetValueName() == "alpha"
@@ -264,7 +264,7 @@ def test_removed_nodes_ignore_the_blackboard(nodes, bt, monkeypatch):
     bt.RemoveNode(printer)
     bt.SaveTree(bt.GetFilePath())
     assert not bt.IsModified()
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     bt.AddEntry("d", "Integer", 4)
     store.rename("a", "alpha")
     with store.batch():
@@ -278,7 +278,7 @@ def test_removed_nodes_ignore_the_blackboard(nodes, bt, monkeypatch):
 def test_nodes_in_the_view_that_follow_a_rename_modify_the_tree(nodes, bt):
     bt.SaveTree(bt.GetFilePath())
     assert not bt.IsModified()
-    bt.blackboardStore().rename("a", "alpha")
+    bt.blackboard_store().rename("a", "alpha")
     assert bt.IsModified()  # their fields (saved in the tree file) changed
 
 
@@ -317,7 +317,7 @@ def test_one_entry_more_or_less_is_one_row_more_or_less(bt, edits):
         assert edits[(combo, "insertItem")] == 0
         assert edits[(combo, "removeItem")] == 1
     edits.clear()
-    bt.blackboardStore().rename("e3", "x3")  # changed in place
+    bt.blackboard_store().rename("e3", "x3")  # changed in place
     bt.MoveEntry("e7", -1)
     assert sum(edits.values()) == 0
     assert texts(combos[0]) == ["e0", "e1", "e2", "x3", "e4", "e7", "e6", "e8", "e9", "e10"]

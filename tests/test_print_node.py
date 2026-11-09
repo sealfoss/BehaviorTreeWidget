@@ -375,7 +375,7 @@ def test_the_node_follows_a_renamed_entry(tree, qtbot):
     other = add_print(tree, x=250, message="literal stays")
     assert tree.SaveTree(tree.GetFilePath())
     changed = record(node.fieldChanged)
-    tree.blackboardStore().rename("count", "total")
+    tree.blackboard_store().rename("count", "total")
     assert node.GetSource() == "total"
     assert combo(node, "Source").currentText() == "total"
     assert texts(combo(node, "Source")) == ["Literal", "total"]

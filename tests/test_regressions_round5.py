@@ -205,7 +205,7 @@ def test_containers_with_broken_repr_still_get_rows(widget):
     widget.SetEntry([BrokenRepr()], "items")
     widget.SetEntry({"k": BrokenRepr()}, "mapping")
     for name in ("items", "mapping"):
-        assert widget.blackboardView().row(name) is not None
+        assert widget.blackboard_view().row(name) is not None
 
 
 def test_set_with_broken_repr_is_skipped_when_saving(widget, tmp_path):
@@ -220,8 +220,8 @@ def test_set_with_broken_repr_is_skipped_when_saving(widget, tmp_path):
 def test_container_tooltips_are_exact_for_small_values(widget):
     widget.SetEntry(list(range(8)), "eight")
     widget.SetEntry({"z": 1, "a": 2}, "ordered")
-    assert widget.blackboardView().row("eight").value_widget.toolTip() == repr(list(range(8)))
-    assert widget.blackboardView().row("ordered").value_widget.toolTip() == "{'z': 1, 'a': 2}"
+    assert widget.blackboard_view().row("eight").value_widget.toolTip() == repr(list(range(8)))
+    assert widget.blackboard_view().row("ordered").value_widget.toolTip() == "{'z': 1, 'a': 2}"
 
 
 def test_safe_repr_of_large_bytes_is_cheap_and_short():
@@ -232,7 +232,7 @@ def test_safe_repr_of_large_bytes_is_cheap_and_short():
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), 1e-9, 12345.678])
 def test_double_rows_show_special_and_tiny_values(widget, value):
     widget.SetEntry(value, "d")
-    spin = widget.blackboardView().row("d").value_widget
+    spin = widget.blackboard_view().row("d").value_widget
     assert isinstance(spin, QDoubleSpinBox) and isinstance(spin, FloatSpinBox)
     assert spin.text() == repr(value)
     stored = widget.GetEntry("d")
@@ -241,7 +241,7 @@ def test_double_rows_show_special_and_tiny_values(widget, value):
 
 def test_nudging_a_tiny_double_keeps_it(widget):
     widget.SetEntry(1e-9, "tiny")
-    spin = widget.blackboardView().row("tiny").value_widget
+    spin = widget.blackboard_view().row("tiny").value_widget
     spin.stepUp()
     assert widget.GetEntry("tiny") == pytest.approx(1.000000001)
 

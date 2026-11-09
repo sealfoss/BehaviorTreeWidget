@@ -273,10 +273,10 @@ def test_every_level_has_a_signal_and_message_logged_gets_them_all(tree, qtbot):
 
 def test_the_widget_emits_the_messages_of_its_tree_logger(tree, qtbot):
     deliver(qtbot)
-    own = record(tree.treeLogger().warningLogged)  # the widget's logger announces through the widget
+    own = record(tree.tree_logger().warningLogged)  # the widget's logger announces through the widget
     widget = record(tree.warningLogged)
     every = record(tree.messageLogged)
-    tree.treeLogger().log(LogLevel.WARNING, "through the logger")
+    tree.tree_logger().log(LogLevel.WARNING, "through the logger")
     qtbot.waitUntil(lambda: widget == ["through the logger"], timeout=2000)
     assert every == [(2, "through the logger")]
     deliver(qtbot)
@@ -369,7 +369,7 @@ def test_the_log_level_drops_less_important_messages(tree, qtbot):
     every = record(tree.messageLogged)
     tree.SetLogLevel(LogLevel.WARNING)
     assert tree.GetLogLevel() is LogLevel.WARNING and tree.GetConfig().log_level == 2
-    assert tree.treeLogger().level() is LogLevel.WARNING
+    assert tree.tree_logger().level() is LogLevel.WARNING
     assert [tree.Log(level, f"level {int(level)}") for level in LogLevel] == [False, True, True, False, False]
     tree.SetLogLevel("debug")
     assert tree.GetLogLevel() is LogLevel.DEBUG
@@ -709,7 +709,7 @@ def test_shutdown_closes_the_log(tree, qtbot):
     assert tree.Log(LogLevel.ERROR, "before shutdown")
     tree.Shutdown()
     assert not tree.Log(LogLevel.ERROR, "after shutdown")
-    assert not tree.treeLogger().enabled(LogLevel.ERROR)
+    assert not tree.tree_logger().enabled(LogLevel.ERROR)
     found = messages(tree.GetLogFilePath())
     assert found[-1] == "before shutdown"
     assert "after shutdown" not in found
@@ -734,7 +734,7 @@ def test_the_configure_dialog_offers_the_log_level(tree, dialogs, make_widget):
     tree.Configure()
     assert seen == {"items": LABELS, "data": [0, 1, 2, 3, 4], "current": "4: INFO"}
     assert tree.GetLogLevel() is LogLevel.WARNING
-    assert tree.treeLogger().level() is LogLevel.WARNING
+    assert tree.tree_logger().level() is LogLevel.WARNING
     assert tree.IsModified()
     assert not tree.Log("info", "dropped") and tree.Log("warning", "kept")
 
@@ -753,7 +753,7 @@ def test_the_configure_dialog_offers_the_log_level(tree, dialogs, make_widget):
     other = make_widget()
     assert other.LoadTree(tree.GetFilePath())
     assert other.GetLogLevel() is LogLevel.WARNING
-    assert other.treeLogger().level() is LogLevel.WARNING
+    assert other.tree_logger().level() is LogLevel.WARNING
     assert not other.Log("debug", "dropped")
 
 
@@ -773,7 +773,7 @@ def test_a_new_tree_starts_at_info(tree, tmp_path):
     tree.SetLogLevel(LogLevel.ERROR)
     assert tree.NewTree(str(tmp_path / "fresh.json"))
     assert tree.GetLogLevel() is LogLevel.INFO
-    assert tree.treeLogger().level() is LogLevel.INFO
+    assert tree.tree_logger().level() is LogLevel.INFO
 
 
 @pytest.mark.parametrize("value, error", [(5, ValueError), (-1, ValueError), (True, TypeError), ("2", TypeError), (2.0, TypeError), (None, TypeError)])
@@ -783,7 +783,7 @@ def test_set_config_rejects_invalid_log_levels(tree, value, error):
     with pytest.raises(error):
         tree.SetConfig(config)
     assert tree.GetLogLevel() is LogLevel.INFO
-    assert tree.treeLogger().level() is LogLevel.INFO
+    assert tree.tree_logger().level() is LogLevel.INFO
 
 
 def test_set_config_stores_a_log_level_enum_as_int(tree):
@@ -818,7 +818,7 @@ def test_a_tree_file_with_an_invalid_log_level_loads_at_info(logs, make_widget, 
     assert bt.GetLogLevel() is LogLevel.INFO
     assert bt.LoadTree(write_tree(tmp_path / "errors_BT.json", config={"log_level": 1}))
     assert bt.GetLogLevel() is LogLevel.ERROR
-    assert bt.treeLogger().level() is LogLevel.ERROR
+    assert bt.tree_logger().level() is LogLevel.ERROR
 
 
 # ============================================================================ the Python loggers

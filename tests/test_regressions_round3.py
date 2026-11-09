@@ -546,7 +546,7 @@ def describe(widget) -> dict:
     return {
         "nodes": nodes,
         "blackboard": [(name, widget.GetEntryType(name), widget.GetEntry(name)) for name in widget.GetEntryNames()],
-        "rows": [row.name for row in widget.blackboardView().rows()],
+        "rows": [row.name for row in widget.blackboard_view().rows()],
         "file": widget.GetFilePath(),
         "modified": widget.IsModified(),
         "title": widget.window().windowTitle(),
@@ -1111,11 +1111,11 @@ def test_command_from_idle_state_slot_runs_after_finished(qtbot, bt, tmp_path, c
     elif command == "LoadTree":
         assert issued["result"] is True
         assert bt.GetFilePath() == os.path.abspath(other)
-        assert bt.blackboardStore().items() == [("y", "Integer", 3)]
+        assert bt.blackboard_store().items() == [("y", "Integer", 3)]
     elif command == "NewTree":
         assert issued["result"] is True
         assert bt.GetFilePath() == os.path.abspath(fresh)
-        assert bt.blackboardStore().items() == []
+        assert bt.blackboard_store().items() == []
     else:
         restart = trace.index(("state", "Running"), first)
         assert restart > first, "Execute from the Idle slot must start the next run after executionFinished"
@@ -1181,7 +1181,7 @@ def test_blackboard_restore_never_marks_the_tree_modified(qtbot, bt, mode):
     w.on_run = write
     fast_config(bt, restore_blackboard=True)
     save(bt)
-    expected = bt.blackboardStore().items()
+    expected = bt.blackboard_store().items()
     modified = record(bt.modifiedChanged)
     bt.Execute()
     if mode == "reset-idle-after-run":
@@ -1195,8 +1195,8 @@ def test_blackboard_restore_never_marks_the_tree_modified(qtbot, bt, mode):
     else:
         bt.Stop()
     qtbot.wait(30)
-    assert bt.blackboardStore().items() == expected
-    view = bt.blackboardView()
+    assert bt.blackboard_store().items() == expected
+    view = bt.blackboard_view()
     assert rows_in_layout(view) == [name for name, _, _ in expected]
     assert view.row("x").value_widget.value() == 0
     assert view.row("ratio").value_widget.value() == 0.5
@@ -1383,7 +1383,7 @@ def test_load_or_new_while_busy_replaces_tree_right_after(qtbot, bt, tmp_path, w
     )
 
     def saved_items():
-        return [item for item in bt.blackboardStore().items() if item[0] != "obj"]
+        return [item for item in bt.blackboard_store().items() if item[0] != "obj"]
 
     if operation == "LoadTree":
         assert node_ids(bt) == {"r2", "n2"}
@@ -1472,7 +1472,7 @@ def test_load_button_in_nested_loop_during_tick(qtbot, bt, dialogs, tmp_path, va
     if valid:
         assert click.kinds == ["open_dialog"]
         assert node_ids(bt) == {"r2", "n2"}
-        assert bt.blackboardStore().items() == [("y", "Integer", 3)]
+        assert bt.blackboard_store().items() == [("y", "Integer", 3)]
         assert finished == []
     else:
         assert click.kinds == ["open_dialog", "critical"], "the error is reported at once"
@@ -1854,7 +1854,7 @@ def test_destroyed_cleanup_is_silent_and_shuts_the_executor_down(qtbot, tmp_path
             widget.Execute()
             assert widget.IsExecuting()
         token = a._run_token
-        store, executor = widget.blackboardStore(), widget.executor()
+        store, executor = widget.blackboard_store(), widget.executor()
         namespace = widget.GetBlackboardNamespace()
         removed, changed = [], []
         store.entryRemoved.connect(lambda name: removed.append(name))
@@ -2071,10 +2071,10 @@ def test_load_order_follows_the_file(qtbot, bt, tmp_path):
     )
     assert bt.LoadTree(path)
     assert bt.GetEntryNames() == ["b", "a", "c", "obj"]
-    assert bt.blackboardStore().items()[:3] == [("b", "Integer", 2), ("a", "Integer", 1), ("c", "String", "three")]
+    assert bt.blackboard_store().items()[:3] == [("b", "Integer", 2), ("a", "Integer", 1), ("c", "String", "three")]
     qtbot.wait(20)
-    assert rows_in_layout(bt.blackboardView()) == ["b", "a", "c", "obj"]
-    assert [row.name for row in bt.blackboardView().rows()] == ["b", "a", "c", "obj"]
+    assert rows_in_layout(bt.blackboard_view()) == ["b", "a", "c", "obj"]
+    assert [row.name for row in bt.blackboard_view().rows()] == ["b", "a", "c", "obj"]
 
 
 def test_store_reorder_and_dispose_notify(qapp):

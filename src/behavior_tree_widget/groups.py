@@ -100,7 +100,7 @@ class GroupNodeWidget(BoxNodeWidget):
 
     DEFAULT_SIZE = (360, 240)
     MIN_SIZE = (120, 60)
-    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
+    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (geometry.SCENE_MARGIN)
     NAME_MIN_WIDTH = 60
     NAME_GRAB_ROOM = 28  # part of the title bar right of the name kept free for dragging the group
     _name_edit: QLineEdit | None = None  # until __init__ finds it (title hooks run before)

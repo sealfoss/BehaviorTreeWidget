@@ -38,4 +38,4 @@ qt_api = "pyside6"
 testpaths = ["tests"]
 timeout = 120
 # Internal code must never use deprecated APIs; tests that check them opt out with a filterwarnings mark.
-filterwarnings = ['error:assigning self\._:DeprecationWarning']
+filterwarnings = ['error:.*is deprecated; use:DeprecationWarning']
