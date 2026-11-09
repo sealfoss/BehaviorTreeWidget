@@ -36,13 +36,19 @@ The `test` extra installs pytest, pytest-qt, pytest-timeout and pytest-xdist.
 ```bash
 .venv/Scripts/python -m ruff check src tests tools    # lint (configuration: pyproject.toml)
 .venv/Scripts/python -m mypy                          # type check (configuration: pyproject.toml)
+.venv/Scripts/python -m mypy --platform linux         # type check as the CI does (on Ubuntu)
 ```
 
-The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. The GitHub
-Actions workflow `.github/workflows/ci.yml` runs on every push and pull request: ruff, mypy and
-`tools/compile_ui.py --check` on Ubuntu, the test suite on Windows with Python 3.10 and 3.13
-(offscreen, `pytest -n auto`), and then builds the wheel and the source distribution, which it
-keeps as the `dist` artifact of the run.
+The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. mypy checks
+the code for the platform it runs on: code under a `sys.platform` check is only checked there
+(code under an `os.name` check is checked everywhere, so Windows-only code belongs under
+`sys.platform == "win32"`).
+
+The GitHub Actions workflow `.github/workflows/ci.yml` runs on every push and pull request: ruff,
+mypy and `tools/compile_ui.py --check` on Ubuntu, the test suite on Windows with Python 3.10 and
+3.13 (offscreen, `pytest -n auto`), and then builds the wheel and the source distribution, which
+it keeps as the `dist` artifact of the run. Each failed test is also an annotation of the run
+(`pytest_terminal_summary` in `tests/conftest.py`), so it can be read without the log.
 
 ## Editing the Qt Designer files
 

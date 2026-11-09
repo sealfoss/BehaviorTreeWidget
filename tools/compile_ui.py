@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import os
 import re
 import shutil
@@ -128,28 +129,42 @@ def module_name(source: Path) -> str:
     return f"ui_{source.stem}"
 
 
+def read_index() -> dict:
+    """``FORMS`` of the index, which is loaded on its own: importing it as part of the package would
+    import the package first, which needs Qt and py_trees."""
+    spec = importlib.util.spec_from_file_location("_behavior_tree_widget_forms_index", INDEX)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {INDEX}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.FORMS)
+
+
 def check() -> int:
-    """Report forms that are missing or out of date (exit status 1), as the test-suite does."""
-    sys.path.insert(0, str(PACKAGE.parent))
-    try:
-        from behavior_tree_widget._forms import FORMS
-    except ImportError:
+    """Report forms that are missing or out of date (exit status 1), as the test-suite does. Needs
+    neither Qt nor the package's dependencies."""
+    if not INDEX.is_file():
         print("the generated forms are missing: run python tools/compile_ui.py")
+        return 1
+    try:
+        forms = read_index()
+    except Exception as error:  # noqa: BLE001 - reported, then the check fails
+        print(f"{INDEX.relative_to(ROOT)} cannot be read ({error}): run python tools/compile_ui.py")
         return 1
     problems = []
     for source in ui_files():
-        form = FORMS.get(source.name)
+        form = forms.get(source.name)
         if form is None or not (FORMS_FOLDER / f"{form.module}.py").is_file():
             problems.append(f"{source.name}: no generated form")
         elif form.sha256 != ui_hash(source.read_bytes()):
             problems.append(f"{source.name}: changed since its form was generated")
-    problems += [f"{name}: the .ui file no longer exists" for name in FORMS if not (UI_FOLDER / name).is_file()]
+    problems += [f"{name}: the .ui file no longer exists" for name in forms if not (UI_FOLDER / name).is_file()]
     for problem in problems:
         print(problem)
     if problems:
         print("run python tools/compile_ui.py")
         return 1
-    print(f"{len(FORMS)} forms are up to date")
+    print(f"{len(forms)} forms are up to date")
     return 0
 
 

@@ -24,6 +24,7 @@ import math
 import os
 import secrets
 import stat
+import sys
 import time
 from typing import Any, TypeGuard
 
@@ -181,26 +182,27 @@ _REPLACE_ATTEMPTS = 5
 _WINDOWS_KEPT_ATTRIBUTES = 0x2 | 0x4  # FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
 
 
+# The Windows-only code is under ``sys.platform`` checks (not ``os.name``): type checkers then
+# skip it on other platforms, where e.g. ``ctypes.windll`` does not exist.
 def _windows_attributes(path: str) -> int:
-    if os.name != "nt":
-        return 0
-    try:
-        return int(getattr(os.stat(path), "st_file_attributes", 0)) & _WINDOWS_KEPT_ATTRIBUTES
-    except OSError:
-        return 0
+    if sys.platform == "win32":
+        try:
+            return int(getattr(os.stat(path), "st_file_attributes", 0)) & _WINDOWS_KEPT_ATTRIBUTES
+        except OSError:
+            pass
+    return 0
 
 
 def _set_windows_attributes(path: str, attributes: int) -> None:
-    if os.name != "nt" or not attributes:
-        return
-    try:
-        import ctypes
+    if sys.platform == "win32" and attributes:
+        try:
+            import ctypes
 
-        current = ctypes.windll.kernel32.GetFileAttributesW(str(path))
-        if current != -1 and current != 0xFFFFFFFF:
-            ctypes.windll.kernel32.SetFileAttributesW(str(path), (current & ~0x80) | attributes)
-    except Exception:  # noqa: BLE001 - cosmetic; never fail a save because of attributes
-        pass
+            current = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+            if current != -1 and current != 0xFFFFFFFF:
+                ctypes.windll.kernel32.SetFileAttributesW(str(path), (current & ~0x80) | attributes)
+        except Exception:  # noqa: BLE001 - cosmetic; never fail a save because of attributes
+            pass
 
 
 def _create_temp_file(path: str, directory: str) -> tuple[int, str]:

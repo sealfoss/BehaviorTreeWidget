@@ -380,3 +380,24 @@ def assert_blackboard_in_file(bt: BehaviorTreeWidget, timeout: float = 3.0) -> N
         assert time.monotonic() < deadline, "the blackboard was not written to the blackboard file"
         time.sleep(0.01)
     assert not bt.IsModified(), "blackboard changes are written to the file, they are not unsaved changes"
+
+
+# ============================================================================ GitHub Actions
+def _escape_annotation(text: str, property_value: bool = False) -> str:
+    """``text`` escaped for a GitHub Actions workflow command (a property value escapes more)."""
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if property_value else text
+
+
+def pytest_terminal_summary(terminalreporter):
+    """On GitHub Actions, annotate the run with each failure, so that it can be read without the
+    job's log (which only signed-in users can open), e.g. through the checks API."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    for report in terminalreporter.stats.get("failed", []) + terminalreporter.stats.get("error", []):
+        path, line, _ = report.location
+        message = "\n".join(report.longreprtext.splitlines()[-40:])[-3000:]
+        terminalreporter.write_line(
+            f"::error file={_escape_annotation(str(path).replace(os.sep, '/'), True)},line={(line or 0) + 1},"
+            f"title={_escape_annotation(report.nodeid, True)}::{_escape_annotation(message)}"
+        )
