@@ -1308,7 +1308,7 @@ def test_unknown_leaf_round_trips_through_save_and_load(qtbot, bt, make_widget, 
     leaf.SetField("count", 9)
     leaf.SetField("label", "kept")
     leaf.SetFieldSelectionIndex("choice", 2)
-    first_path = tmp_path / "first.json"
+    first_path = tmp_path / "first_BT.json"
     assert bt.SaveTree(str(first_path))
 
     other = make_widget(node_types=[])
@@ -1322,7 +1322,7 @@ def test_unknown_leaf_round_trips_through_save_and_load(qtbot, bt, make_widget, 
     assert node.GetParent() is other.GetRootNode()
     assert type(node.field_editor("count")) is QSpinBox
 
-    second_path = tmp_path / "second.json"
+    second_path = tmp_path / "second_BT.json"
     assert other.SaveTree(str(second_path))
     saved = {n["id"]: n for n in json.loads(first_path.read_text(encoding="utf-8"))["nodes"]}
     resaved = {n["id"]: n for n in json.loads(second_path.read_text(encoding="utf-8"))["nodes"]}

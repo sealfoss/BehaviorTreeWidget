@@ -153,7 +153,7 @@ def test_the_check_box_stays_usable_while_executing(qtbot, bt):
 
 def test_loop_setting_is_saved_and_loaded(make_widget, bt, tmp_path):
     click_box(bt)
-    path = tmp_path / "loop.json"
+    path = tmp_path / "loop_BT.json"
     assert bt.SaveTree(str(path))
     assert json.loads(path.read_text(encoding="utf-8"))["config"]["repeat"] is True
 

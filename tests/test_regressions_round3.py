@@ -1055,7 +1055,7 @@ def test_command_from_running_state_slot(qtbot, bt, audit, qt_messages, trigger,
 @pytest.mark.parametrize("command", ["Stop", "Reset", "LoadTree", "NewTree", "Execute"])
 def test_command_from_idle_state_slot_runs_after_finished(qtbot, bt, tmp_path, command):
     other = next_tree_file(tmp_path)
-    fresh = str(tmp_path / "fresh.json")
+    fresh = str(tmp_path / "fresh_BT.json")
     bt.AddEntry("x", "Integer", 0)
     log, (w,) = probes(bt, (R3Probe, "w"))
     w.on_run = lambda tree, node: tree.SetEntry(tree.GetEntry("x") + 1, "x")
@@ -1338,7 +1338,7 @@ def _run_busy_scenario(qtbot, bt, where, info):
 @pytest.mark.parametrize("operation", ["LoadTree", "NewTree"])
 def test_load_or_new_while_busy_replaces_tree_right_after(qtbot, bt, tmp_path, where, operation):
     other = next_tree_file(tmp_path)
-    fresh = str(tmp_path / "fresh.json")
+    fresh = str(tmp_path / "fresh_BT.json")
     target = other if operation == "LoadTree" else fresh
     bt.AddEntry("x", "Integer", 0)
     before_run, during_run = _Handle("before"), _Handle("during")
@@ -1348,7 +1348,7 @@ def test_load_or_new_while_busy_replaces_tree_right_after(qtbot, bt, tmp_path, w
         tree.SetEntry(1, "x")
         tree.SetEntry(during_run, "obj")
         result = tree.LoadTree(other) if operation == "LoadTree" else tree.NewTree(fresh)
-        action.file_written = os.path.exists(fresh)
+        action.file_written = os.path.exists(fresh) and os.path.exists(str(tmp_path / "fresh_BB.json"))
         return result
 
     log, a, b, info = _busy_scenario(qtbot, bt, where, action)
@@ -1740,9 +1740,9 @@ def test_structure_and_file_api_raise_from_non_gui_threads(qtbot, bt, dialogs, t
     for name in calls:
         assert isinstance(results[name], RuntimeError), f"{name} from a non-GUI thread: {results[name]!r}"
     assert describe(bt) == before
-    assert not os.path.exists(tmp_path / "from_thread_new.json")
-    assert not os.path.exists(tmp_path / "from_thread_save.json")
-    assert not os.path.exists(tmp_path / "dialog_path.json")
+    for name in ("from_thread_new", "from_thread_save", "dialog_path"):
+        for suffix in (".json", "_BT.json", "_BB.json"):
+            assert not os.path.exists(tmp_path / f"{name}{suffix}"), f"{name}{suffix}"
     assert dialogs.shown == [], "no dialog may be opened from a worker thread"
     assert child.GetParent() is root and loose.GetParent() is None
 
@@ -1781,7 +1781,7 @@ def test_add_node_never_places_a_node_at_a_non_finite_position(qtbot, bt, tmp_pa
     assert all(v == v and abs(v) <= POSITION_LIMIT for v in (pos.x(), pos.y())), (
         f"AddNode({x}, {y}) placed the node at ({pos.x()}, {pos.y()})"
     )
-    out = tmp_path / "nan.json"
+    out = tmp_path / "nan_BT.json"
     assert bt.SaveTree(str(out))
     assert "NaN" not in out.read_text(encoding="utf-8")
 
@@ -1974,12 +1974,13 @@ def test_object_entries_are_never_saved_and_cause_no_warning(qtbot, bt, dialogs,
     caplog.clear()
     bt.button("Save").click()
     assert dialogs.kinds() == ["save_dialog"], "saving Object entries must not show a warning"
-    assert read_json(path)["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert read_json(tmp_path / "saved_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert "blackboard" not in read_json(tmp_path / "saved_BT.json")
     assert warnings_logged(caplog) == []
     debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG and r.name.startswith(LOGGER)]
     assert any("'obj'" in message for message in debug), "skipping an Object entry is logged at debug level"
     assert bt.SaveTree(str(tmp_path / "programmatic.json"))
-    assert read_json(tmp_path / "programmatic.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert read_json(tmp_path / "programmatic_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
     assert warnings_logged(caplog) == []
     assert not bt.IsModified()
     # kept by New / Load, with their run-time values
@@ -2168,7 +2169,7 @@ def test_title_assignment_is_coerced(qtbot, bt, tmp_path):
     root._title = None
     assert root.GetTitle() == "Root"
     leaf._title = 1234
-    out = str(tmp_path / "titles.json")
+    out = str(tmp_path / "titles_BT.json")
     assert bt.SaveTree(out)
     assert saved_node(read_json(out), leaf.GetId())["title"] == "1234"
 
@@ -2522,7 +2523,7 @@ def test_unknown_leaf_keeps_undecodable_fields_and_unknown_keys(qtbot, make_widg
     assert widget.LoadTree(path)
     unknown = node_by_id(widget, "u")
     assert isinstance(unknown, UnknownLeafNodeWidget)
-    out = tmp_path / "out.json"
+    out = tmp_path / "out_BT.json"
     assert widget.SaveTree(str(out))
     saved = saved_node(read_json(out), "u")
     for key, value in raw_fields.items():
@@ -2536,7 +2537,7 @@ def test_unknown_leaf_keeps_undecodable_fields_and_unknown_keys(qtbot, make_widg
     # a second round trip is stable
     again = make_widget()
     assert again.LoadTree(str(out))
-    out2 = tmp_path / "out2.json"
+    out2 = tmp_path / "out2_BT.json"
     assert again.SaveTree(str(out2))
     assert saved_node(read_json(out2), "u") == saved
 
@@ -2576,7 +2577,7 @@ def test_write_json_atomic_keeps_hidden_and_system_attributes(tmp_path, attribut
 
 @pytest.fixture
 def read_only_file(tmp_path):
-    target = tmp_path / "ro.json"
+    target = tmp_path / "ro_BT.json"  # named like a tree file: SaveTree writes to it
     target.write_text('{"old": 1}\n', encoding="utf-8")
     os.chmod(target, stat.S_IREAD)
     yield target
@@ -2590,7 +2591,7 @@ def test_write_json_atomic_read_only_target_names_it(tmp_path, read_only_file, m
     message = str(info.value)
     assert os.path.realpath(str(read_only_file)) in message or str(read_only_file) in message, message
     assert read_only_file.read_text(encoding="utf-8") == '{"old": 1}\n'
-    assert os.listdir(tmp_path) == ["ro.json"], "no temp file may be left behind"
+    assert os.listdir(tmp_path) == ["ro_BT.json"], "no temp file may be left behind"
 
 
 @pytest.mark.parametrize("interactive", [False, True], ids=["programmatic", "save-button"])
@@ -2603,14 +2604,14 @@ def test_save_tree_to_read_only_file(qtbot, bt, dialogs, tmp_path, read_only_fil
             bt.button("Save").click()
         assert exceptions == []
         texts = critical_texts(dialogs)
-        assert len(texts) == 1 and "ro.json" in texts[0]
+        assert len(texts) == 1 and "ro_BT.json" in texts[0]
     else:
         with pytest.raises(PermissionError) as info:
             bt.SaveTree(str(read_only_file))
-        assert "ro.json" in str(info.value)
+        assert "ro_BT.json" in str(info.value)
     assert read_only_file.read_text(encoding="utf-8") == '{"old": 1}\n'
-    assert sorted(os.listdir(tmp_path)) == ["ro.json", "tree.json"]
-    assert bt.GetFilePath() == str(tmp_path / "tree.json")
+    assert sorted(os.listdir(tmp_path)) == ["ro_BT.json", "tree_BB.json", "tree_BT.json"]
+    assert bt.GetFilePath() == str(tmp_path / "tree_BT.json")
 
 
 @pytest.mark.skipif(not WINDOWS, reason="an open file blocks os.replace only on Windows")

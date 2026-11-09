@@ -128,12 +128,15 @@ def saved_nodes(path) -> list[dict]:
 
 # ============================================================================ the menu
 def test_notes_is_the_last_entry_of_the_add_menu(bt, dialogs):
+    # Notes and Group (box nodes, not part of the behavior tree) close the menu in a group of
+    # their own; Notes is second to last, Group comes last.
     menu = context_menu(bt, dialogs, empty_point(bt))
     actions = [a for a in menu.actions() if a.objectName().startswith("Add_") or a.isSeparator()]
-    assert actions[-1].objectName() == "Add_Notes"
-    assert actions[-1].text() == "Notes"
-    assert actions[-2].isSeparator()  # in its own group: it is not part of the behavior tree
-    assert bt._node_menu_entries()[-1] == ("notes", NOTES, NOTES)
+    assert [a.objectName() for a in actions[-2:]] == ["Add_Notes", "Add_Group"]
+    assert actions[-2].text() == "Notes"
+    assert actions[-1].text() == "Group"
+    assert actions[-3].isSeparator()  # in its own group: it is not part of the behavior tree
+    assert bt._node_menu_entries()[-2:] == [("notes", NOTES, NOTES), ("notes", "Group", "Group")]
 
 
 def test_choosing_notes_in_the_menu_drops_a_note_at_the_click(qtbot, bt, dialogs):
@@ -154,7 +157,7 @@ def test_choosing_notes_in_the_menu_drops_a_note_at_the_click(qtbot, bt, dialogs
 
 
 def test_notes_is_a_node_type_but_not_a_leaf_type(bt):
-    assert bt.GetNodeTypes()[-1] == NOTES
+    assert bt.GetNodeTypes()[-2:] == [NOTES, "Group"]  # second to last, before the Group box
     assert bt.GetNodeType(NOTES) is None
     assert isinstance(bt.AddNode(NOTES, 0, 300), NotesNodeWidget)
     assert isinstance(bt.AddNode(NotesNodeWidget(), 300, 300), NotesNodeWidget)
@@ -787,7 +790,7 @@ def test_moving_a_note_with_other_selected_nodes(qtbot, bt):
 def test_notes_are_saved_and_loaded(qtbot, bt, tmp_path):
     note = add_note(bt, 120.0, 340.0, text="Line 1\nLine 2 é✓")
     note.SetNoteSize(333, 177)
-    path = tmp_path / "notes.json"
+    path = tmp_path / "notes_BT.json"
     assert bt.SaveTree(str(path))
     saved = [item for item in saved_nodes(path) if item["type"] == NOTES]
     assert saved == [

@@ -37,6 +37,7 @@ from behavior_tree_widget.serialization import (
     decode_value,
     encode_value,
     is_encodable,
+    read_blackboard_file,
     read_tree_file,
     write_json_atomic,
 )
@@ -944,14 +945,14 @@ def test_widget_get_config_returns_copy(bt):
 def test_saved_tree_file_passes_validation_and_contains_config(bt, tmp_path):
     config = TreeConfig(tick_interval_ms=250, repeat=True, restore_blackboard=True, default_memory=False)
     bt.SetConfig(config)
-    path = tmp_path / "saved.json"
-    assert bt.SaveTree(str(path))
-    data = read_tree_file(str(path))
+    assert bt.SaveTree(str(tmp_path / "saved.json"))
+    data = read_tree_file(str(tmp_path / "saved_BT.json"))
     assert data["format"] == FORMAT_NAME
     assert data["version"] == FORMAT_VERSION
     assert data["config"] == config.to_dict()
     assert isinstance(data["nodes"], list) and isinstance(data["connections"], list)
-    assert isinstance(data["blackboard"], list)
+    assert "blackboard" not in data  # the blackboard is in a file of its own
+    assert isinstance(read_blackboard_file(str(tmp_path / "saved_BB.json")), list)  # validates that file
     assert temp_files(tmp_path) == []
 
 

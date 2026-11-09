@@ -82,7 +82,7 @@ from behavior_tree_widget.serialization import (
     write_json_atomic,
 )
 
-from conftest import TEST_NODE_TYPES, SlowCancelable, fast_config, label_point, viewport_point
+from conftest import TEST_NODE_TYPES, SlowCancelable, fast_config, file_blackboard, label_point, viewport_point
 
 LEFT = Qt.MouseButton.LeftButton
 RIGHT = Qt.MouseButton.RightButton
@@ -1011,7 +1011,7 @@ def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_
     pre.SetFieldSelectionIndex("mode", 2)
     post.field_editor("ratio").setValue(0.75)
     post.SetTitle("Renamed Post")
-    path = str(tmp_path / "init.json")
+    path = str(tmp_path / "init_BT.json")
     assert lbt.SaveTree(path)
 
     data = read_json(path)
@@ -1037,7 +1037,7 @@ def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_
     assert lempty.GetFields() == {} and not lempty._fields_frame.isVisibleTo(lempty)
     assert not loaded.IsModified()
 
-    again = str(tmp_path / "again.json")
+    again = str(tmp_path / "again_BT.json")
     assert loaded.SaveTree(again)
     assert read_json(again)["nodes"] == data["nodes"]
 
@@ -1206,7 +1206,7 @@ def test_unknown_leaf_title_marker_and_round_trip(qtbot, make_widget, tmp_path):
     assert u1.GetTypeName() == "MysteryType"
     assert u1.GetFields() == {"speed": 3, "mode": ["a", "b"]}
 
-    out = str(tmp_path / "resaved.json")
+    out = str(tmp_path / "resaved_BT.json")
     assert widget.SaveTree(out)
     data = read_json(out)
     s1, s2 = saved_node(data, "u1"), saved_node(data, "u2")
@@ -1239,7 +1239,7 @@ def test_root_titled_sequence_with_selector_type_round_trips(qtbot, bt, make_wid
     seq = bt.AddNode("Selector", 300, 0)
     seq.SetTitle("Sequence")
     assert root._title_label.text() == "Sequence (Selector)"
-    path = str(tmp_path / "root.json")
+    path = str(tmp_path / "root_BT.json")
     assert bt.SaveTree(path)
 
     loaded = make_widget()
@@ -1250,7 +1250,7 @@ def test_root_titled_sequence_with_selector_type_round_trips(qtbot, bt, make_wid
     assert lroot._title_label.text() == "Sequence (Selector)"
     lseq = node_by_id(loaded, seq.GetId())
     assert (lseq.GetCompositeType(), lseq.GetTitle()) == ("Selector", "Sequence")
-    again = str(tmp_path / "again.json")
+    again = str(tmp_path / "again_BT.json")
     assert loaded.SaveTree(again)
     assert read_json(again)["nodes"] == read_json(path)["nodes"]
 
@@ -1317,7 +1317,7 @@ def test_type_name_is_not_inherited(qtbot, lbt, tmp_path, make_widget):
     assert type(base) is BaseNamed and base.GetTypeName() == "PublicBaseName"
     assert lbt.GetNodeType("DerivedNamed") is DerivedNamed
     assert lbt.GetNodeType("PublicBaseName") is BaseNamed
-    path = str(tmp_path / "names.json")
+    path = str(tmp_path / "names_BT.json")
     assert lbt.SaveTree(path)
     data = read_json(path)
     assert saved_node(data, derived.GetId())["type"] == "DerivedNamed"
@@ -1450,20 +1450,20 @@ def self_referencing_list() -> list:
 def test_save_skips_self_referencing_list_entry(qtbot, bt, dialogs, tmp_path):
     bt.SetEntry(self_referencing_list(), "loop")
     bt.SetEntry(5, "fine")
-    path = str(tmp_path / "loop.json")
+    path = str(tmp_path / "loop_BT.json")
     # programmatic: saved, the value is skipped
     assert bt.SaveTree(path) is True
-    names = [entry["name"] for entry in read_json(path)["blackboard"]]
+    names = [entry["name"] for entry in file_blackboard(path)]
     assert names == ["fine"]
     # interactive: no exception escapes; a warning names the skipped entry
-    dialogs.save_path = str(tmp_path / "loop2.json")
+    dialogs.save_path = str(tmp_path / "loop2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
     assert "critical" not in dialogs.kinds()
     warnings = [args for kind, args in dialogs.shown if kind == "warning"]
     assert len(warnings) == 1 and "loop" in warnings[0][2]
-    assert [entry["name"] for entry in read_json(tmp_path / "loop2.json")["blackboard"]] == ["fine"]
+    assert [entry["name"] for entry in read_json(tmp_path / "loop2_BB.json")["blackboard"]] == ["fine"]
     assert bt.GetFilePath() == os.path.abspath(dialogs.save_path)
 
 
@@ -1471,7 +1471,7 @@ def test_save_skips_self_referencing_list_field(qtbot, bt, dialogs, tmp_path):
     node = bt.AddNode("NoFields", 0, 200)
     node.SetField("loop", self_referencing_list())
     node.SetField("ok", 3)
-    path = str(tmp_path / "field_loop.json")
+    path = str(tmp_path / "field_loop_BT.json")
     assert bt.SaveTree(path)
     assert saved_node(read_json(path), node.GetId())["fields"] == {"ok": 3}
     dialogs.save_path = path
@@ -1489,10 +1489,11 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
     node = bt.AddNode("AllFields", 0, 200)
     node.SetField("label", text_field)
     node.SetTitle("title \udc80")
-    path = str(tmp_path / "surrogates.json")
+    path = str(tmp_path / "surrogates_BT.json")
     assert bt.SaveTree(path)
-    with open(path, "rb") as stream:
-        stream.read().decode("utf-8")  # the file is valid UTF-8
+    for name in ("surrogates_BT.json", "surrogates_BB.json"):
+        with open(tmp_path / name, "rb") as stream:
+            stream.read().decode("utf-8")  # the tree file and the blackboard file are valid UTF-8
 
     loaded = make_widget()
     assert loaded.LoadTree(path)
@@ -1502,12 +1503,12 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
     assert lnode.GetTitle() == "title \udc80"
 
     # interactive save works as well
-    dialogs.save_path = str(tmp_path / "surrogates2.json")
+    dialogs.save_path = str(tmp_path / "surrogates2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
     assert "critical" not in dialogs.kinds()
-    assert read_json(dialogs.save_path)["blackboard"][0]["value"] == text_entry
+    assert read_json(tmp_path / "surrogates2_BB.json")["blackboard"][0]["value"] == text_entry
 
 
 @pytest.mark.parametrize(
@@ -1518,14 +1519,14 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
 def test_save_with_uncopyable_field_value(qtbot, bt, dialogs, tmp_path, value_factory):
     node = bt.AddNode("AllFields", 0, 200)
     node.SetField("handle", value_factory())
-    path = str(tmp_path / "uncopyable.json")
+    path = str(tmp_path / "uncopyable_BT.json")
     # programmatic: documented to skip values that cannot be written
     assert bt.SaveTree(path) is True
     fields = saved_node(read_json(path), node.GetId())["fields"]
     assert "handle" not in fields
     assert fields["count"] == 3 and fields["label"] == "hello"
     # interactive: no exception escapes, a warning lists the field
-    dialogs.save_path = str(tmp_path / "uncopyable2.json")
+    dialogs.save_path = str(tmp_path / "uncopyable2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
@@ -1542,7 +1543,7 @@ def test_node_data_that_cannot_be_read_is_reported_not_raised(qtbot, lbt, dialog
         raise RuntimeError("no data today")
 
     monkeypatch.setattr(PostInitNode, "_to_dict", broken)
-    dialogs.save_path = str(tmp_path / "broken.json")
+    dialogs.save_path = str(tmp_path / "broken_BT.json")
     with capture_exceptions() as exceptions:
         lbt.button("Save").click()
     assert exceptions == []
@@ -1562,7 +1563,7 @@ def test_save_errors_raise_programmatically_and_show_critical_interactively(bt, 
         bt.button("Save").click()
     assert exceptions == []
     assert dialogs.kinds()[-1] == "critical"
-    assert bt.GetFilePath() == str(tmp_path / "tree.json")
+    assert bt.GetFilePath() == str(tmp_path / "tree_BT.json")
 
 
 @pytest.mark.parametrize("bad", ["missing_dir", "nul"])
@@ -1641,7 +1642,7 @@ def test_list_of_locks_object_entry_is_skipped_when_saving(bt, dialogs, tmp_path
     bt.SetEntry("x", "text")
     dialogs.save_path = str(tmp_path / "locks.json")
     bt.button("Save").click()
-    assert [entry["name"] for entry in read_json(dialogs.save_path)["blackboard"]] == ["text"]
+    assert [entry["name"] for entry in read_json(tmp_path / "locks_BB.json")["blackboard"]] == ["text"]
     # Object entries are run-time values: silently not saved (no warning on every save).
     assert "warning" not in dialogs.kinds()
 
@@ -2296,7 +2297,7 @@ def test_new_tree_during_a_tick_never_leaves_a_partial_tree(qtbot, lbt, dialogs,
     assert error is None or isinstance(error, (TreeFileError, OSError)), repr(error)
     _assert_whole_tree(
         lbt, previous_ids,
-        lambda w: len(w.GetNodes()) == 1 and w.GetFilePath() == os.path.abspath(fresh),
+        lambda w: len(w.GetNodes()) == 1 and w.GetFilePath() == os.path.abspath(str(tmp_path / "fresh_BT.json")),
     )
 
 

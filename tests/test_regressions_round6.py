@@ -330,7 +330,7 @@ def test_demo_loads_the_file_given_on_the_command_line(qtbot, tmp_path, monkeypa
 
     monkeypatch.setattr(demo, "DemoWindow", make_window)
     monkeypatch.setattr(QApplication, "exec", lambda self: 0)
-    path = tmp_path / "tree.json"
+    path = tmp_path / "tree_BT.json"  # the tree file written by NewTree (its blackboard: tree_BB.json)
     source = real_window()
     qtbot.addWidget(source)
     assert source.tree.NewTree(str(path))

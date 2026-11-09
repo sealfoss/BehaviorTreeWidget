@@ -82,11 +82,14 @@ def test_a_tree_written_by_0_5_0_loads_unchanged(bt, tmp_path, caplog):
 
 def test_a_tree_written_by_0_5_0_is_saved_again_with_the_same_data(bt, tmp_path, caplog):
     original = load(bt, tmp_path, "tree_0_5_0.json", caplog)
-    path = tmp_path / "resaved.json"
-    assert bt.SaveTree(str(path))
-    resaved = json.loads(path.read_text(encoding="utf-8"))
-    for key in ("format", "version", "config", "connections", "blackboard"):
+    assert bt.SaveTree(str(tmp_path / "resaved.json"))
+    resaved = json.loads((tmp_path / "resaved_BT.json").read_text(encoding="utf-8"))
+    for key in ("format", "version", "config", "connections"):
         assert resaved[key] == original[key], key
+    # the blackboard, stored in the tree file by 0.5.0, now has a file of its own
+    assert "blackboard" not in resaved
+    resaved_blackboard = json.loads((tmp_path / "resaved_BB.json").read_text(encoding="utf-8"))
+    assert resaved_blackboard["blackboard"] == original["blackboard"]
     assert sorted(resaved["nodes"], key=lambda node: node["id"]) == sorted(original["nodes"], key=lambda node: node["id"])
 
 
@@ -203,8 +206,8 @@ def test_an_unregistered_application_type_named_like_a_new_built_in_becomes_a_pl
     children = bt.GetRootNode().GetChildren()
     assert [type(child) for child in children] == [UnknownLeafNodeWidget, UnknownLeafNodeWidget]
     assert [child.GetTypeName() for child in children] == ["Notes", "UDP Message"]
-    resaved = tmp_path / "resaved.json"
-    assert bt.SaveTree(str(resaved))
+    assert bt.SaveTree(str(tmp_path / "resaved.json"))
+    resaved = tmp_path / "resaved_BT.json"
     nodes = {node["id"]: node for node in json.loads(resaved.read_text(encoding="utf-8"))["nodes"]}
     assert nodes["n"]["fields"] == {"recipient": "alice"} and "text" not in nodes["n"]
     assert nodes["u"]["fields"] == {"target": "dock"}
@@ -215,4 +218,6 @@ def test_an_unregistered_application_type_named_like_a_new_built_in_becomes_a_pl
 def test_a_built_in_node_type_can_still_be_registered_again(bt):
     bt.RegisterNodeType(UdpMessageNodeWidget)  # as for the other built-in types: allowed, nothing changes
     assert bt.GetNodeType("UDP Message") is UdpMessageNodeWidget
-    assert bt._node_menu_entries()[-1] == ("notes", "Notes", "Notes")
+    entries = bt._node_menu_entries()
+    assert entries[-2:] == [("notes", "Notes", "Notes"), ("notes", "Group", "Group")]
+    assert [entry for entry in entries if entry[1] == "UDP Message"] == [("network", "UDP Message", "UDP Message")]

@@ -25,6 +25,7 @@ from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status  # n
 from behavior_tree_widget.blackboard import BlackboardView  # noqa: E402
 from behavior_tree_widget.canvas import TreeView  # noqa: E402
 from behavior_tree_widget.demo import DEMO_NODE_TYPES  # noqa: E402
+from behavior_tree_widget.serialization import blackboard_path_for, tree_file_paths  # noqa: E402
 
 
 # ============================================================================ test node types
@@ -191,6 +192,17 @@ class Dialogs:
         return [kind for kind, _ in self.shown]
 
 
+@pytest.fixture(autouse=True, scope="session")
+def log_folder(tmp_path_factory):
+    """The tree logs of the test-suite are written to a temporary folder, not to the folder the
+    tests are run from."""
+    folder = tmp_path_factory.mktemp("tree_logs")
+    previous = BehaviorTreeWidget.LOG_FOLDER
+    BehaviorTreeWidget.LOG_FOLDER = str(folder)
+    yield folder
+    BehaviorTreeWidget.LOG_FOLDER = previous
+
+
 @pytest.fixture(autouse=True)
 def dialogs(monkeypatch) -> Dialogs:
     state = Dialogs()
@@ -268,7 +280,8 @@ def make_widget(qtbot):
 
 @pytest.fixture
 def bt(make_widget, tmp_path):
-    """A shown BehaviorTreeWidget holding a new tree stored in tmp_path/tree.json."""
+    """A shown BehaviorTreeWidget holding a new tree stored in tmp_path/tree_BT.json (its
+    blackboard in tmp_path/tree_BB.json)."""
     widget = make_widget()
     assert widget.NewTree(str(tmp_path / "tree.json"))
     return widget
@@ -325,19 +338,35 @@ def fast_config(bt: BehaviorTreeWidget, **changes) -> None:
     bt.SetConfig(config)
 
 
-def file_blackboard(path) -> list:
-    """The "blackboard" section of the tree file at ``path``."""
+def file_blackboard(path) -> list | None:
+    """The blackboard stored for the tree file at ``path``: the entries of its blackboard file
+    (``<name>_BB.json``), or the "blackboard" section of a single-file tree of an earlier version
+    when there is no blackboard file. ``path`` may also be the blackboard file itself."""
+    blackboard_path = blackboard_path_for(str(path))
+    if os.path.exists(blackboard_path):
+        with open(blackboard_path, encoding="utf-8") as stream:
+            return json.load(stream).get("blackboard")
     with open(path, encoding="utf-8") as stream:
         return json.load(stream).get("blackboard")
 
 
+def read_json(path) -> dict:
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def tree_file(path) -> str:
+    """The tree file (``<name>_BT.json``) written by SaveTree / NewTree for ``path``."""
+    return tree_file_paths(str(path))[0]
+
+
 def assert_blackboard_in_file(bt: BehaviorTreeWidget, timeout: float = 3.0) -> None:
-    """Wait until the tree file holds the current blackboard; nothing is then left unsaved by it."""
+    """Wait until the blackboard file holds the current blackboard; nothing is then left unsaved by it."""
     deadline = time.monotonic() + timeout
     while True:
         QApplication.processEvents()
         if file_blackboard(bt.GetFilePath()) == bt.blackboardStore().to_list(quiet=True):
             break
-        assert time.monotonic() < deadline, "the blackboard was not written to the tree file"
+        assert time.monotonic() < deadline, "the blackboard was not written to the blackboard file"
         time.sleep(0.01)
     assert not bt.IsModified(), "blackboard changes are written to the file, they are not unsaved changes"

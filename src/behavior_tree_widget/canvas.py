@@ -11,6 +11,9 @@ scene with :class:`QGraphicsProxyWidget`. All mouse gestures are interpreted by
   selected nodes when it is selected); Ctrl + click toggles, Shift + click adds it
 * Notes nodes: drag an edge or a corner -> resize the note; click the text (without
   dragging) -> edit it (Escape or a click elsewhere ends editing)
+* Group nodes: drag the title bar -> move the group with every node lying completely
+  inside it; drag an edge or a corner -> resize it; clicks inside a group go to what lies
+  below it (nodes, or the canvas itself)
 * press on empty space or on a connection line and drag -> select the nodes touched
   by a rectangle (Shift + drag adds them to the selection); a click there deselects
   the nodes
@@ -21,7 +24,8 @@ scene with :class:`QGraphicsProxyWidget`. All mouse gestures are interpreted by
   its connections)
 * Ctrl+C / Ctrl+V -> copy / paste the selected nodes; Ctrl+A -> select every node
 * right click -> context menu (node: rename/select children/type/memory/delete,
-  note: edit text/delete, empty: add node)
+  note: edit text/delete, group: rename/select contents/border color/promote to
+  sub-tree/delete, empty: add node)
 * Ctrl + mouse wheel -> zoom
 """
 
@@ -41,15 +45,18 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QIcon,
     QKeySequence,
     QPainter,
     QPainterPath,
     QPainterPathStroker,
     QPalette,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QColorDialog,
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsProxyWidget,
@@ -74,7 +81,9 @@ from .nodes import (
     RootNodeWidget,
     is_interactive_widget,
 )
-from .notes import BOTTOM, LEFT, RIGHT, TOP, NotesNodeWidget, ResizeHandle
+from .groups import GROUP_COLORS, GroupNodeWidget
+from .notes import BOTTOM, LEFT, RIGHT, TOP, BoxNodeWidget, NotesNodeWidget, ResizeHandle
+from .subtree import SubTreeNodeWidget
 
 if TYPE_CHECKING:  # pragma: no cover
     from .widget import BehaviorTreeWidget
@@ -97,6 +106,7 @@ INVALID_DRAG_COLOR = QColor(CONNECTION_COLORS[ConnectionState.DISCONNECTED])  # 
 SELECTION_COLOR = QColor("#0a84ff")  # outline of selected nodes and of the selection rectangle
 PASTE_GAP = 20.0  # minimum distance between pasted nodes and the nodes already in the view
 NOTE_Z_BASE = -1e9  # notes are stacked below the connection lines (z -1) and the other nodes
+GROUP_Z_BASE = -2e9  # groups are stacked below everything else, notes included
 
 
 def clamp_to_scene(pos: QPointF) -> tuple[QPointF, bool]:
@@ -255,7 +265,7 @@ class NodeItem(QGraphicsProxyWidget):
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
         super().paint(painter, option, widget)
         selected = self.view.is_node_selected(self.node)
-        note = isinstance(self.node, NotesNodeWidget)  # a note has no status, and its own border
+        note = isinstance(self.node, BoxNodeWidget)  # a note or group has no status, and its own border
         if note and not selected:
             return
         status = self.node.GetStatus()
@@ -481,6 +491,9 @@ class TreeView(QGraphicsView):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
 
+        #: Folder that relative sub-tree file names of Sub-Tree nodes in this view are relative to
+        #: (the folder of the sub-tree file shown); None: the folder of the tree file.
+        self.base_folder: str | None = None
         self._nodes: list[NodeWidget] = []
         self._connections: dict[NodeWidget, ConnectionItem] = {}  # keyed by child node
         self._selected_connection: ConnectionItem | None = None
@@ -488,6 +501,7 @@ class TreeView(QGraphicsView):
         self._locked = False
         self._z_counter = 1.0
         self._note_z_counter = NOTE_Z_BASE
+        self._group_z_counter = GROUP_Z_BASE
 
         self._gesture = _Gesture.IDLE
         self._last_view_pos = QPoint()
@@ -505,7 +519,7 @@ class TreeView(QGraphicsView):
         self._band: SelectionBandItem | None = None
         self._band_origin = QPointF()
         self._band_base: dict[NodeWidget, None] = {}  # selection when the rectangle was started
-        self._resize_node: NotesNodeWidget | None = None  # the note resized by a handle
+        self._resize_node: BoxNodeWidget | None = None  # the note or group resized by a handle
         self._resize_edges = 0  # edges moved by that handle (notes.LEFT, TOP, RIGHT, BOTTOM)
         self._resize_start = QRectF()  # the note's scene rectangle when the resizing started
         self._resized = False
@@ -803,14 +817,37 @@ class TreeView(QGraphicsView):
         return self._z_counter
 
     def raise_node(self, node: NodeWidget) -> None:
-        """Stack ``node`` above the others; notes stay below the connection lines and the other nodes."""
+        """Stack ``node`` above the others; notes stay below the connection lines and the other
+        nodes, and groups below everything else."""
         if node._item is None:
             return
-        if isinstance(node, NotesNodeWidget):
+        if isinstance(node, GroupNodeWidget):
+            self._group_z_counter += 1.0
+            node._item.setZValue(self._group_z_counter)
+        elif isinstance(node, NotesNodeWidget):
             self._note_z_counter += 1.0
             node._item.setZValue(self._note_z_counter)
         else:
             node._item.setZValue(self.next_z())
+
+    def group_contents(self, group: GroupNodeWidget) -> list[NodeWidget]:
+        """The nodes (notes and groups included) lying completely inside ``group``, in view order."""
+        if group._item is None:
+            return []
+        area = group._item.sceneBoundingRect()
+        return [
+            node
+            for node in self._nodes
+            if node is not group and node._item is not None and area.contains(node._item.sceneBoundingRect())
+        ]
+
+    def _with_group_contents(self, nodes: list[NodeWidget]) -> list[NodeWidget]:
+        """``nodes`` and the contents of the groups among them (which move with their group)."""
+        result = dict.fromkeys(nodes)
+        for node in nodes:
+            if isinstance(node, GroupNodeWidget):
+                result.update(dict.fromkeys(self.group_contents(node)))
+        return list(result)
 
     def center_on_node(self, node: NodeWidget) -> None:
         if node._item is not None:
@@ -846,6 +883,8 @@ class TreeView(QGraphicsView):
                 widget = node.childAt(local.toPoint())
                 if isinstance(widget, ResizeHandle):
                     return Hit(Hit.RESIZE, node, widget=widget)
+                if isinstance(node, GroupNodeWidget) and not node.header_rect().contains(local):
+                    continue  # the inside of a group: the click goes to what lies below it
                 if widget is not None and is_interactive_widget(widget, node):
                     return Hit(Hit.INTERACTIVE, node, widget=widget)
                 return Hit(Hit.NODE, node, widget=widget)
@@ -1149,27 +1188,27 @@ class TreeView(QGraphicsView):
         self._press_scene_pos = self.mapToScene(pos)
         self._move_start_pos = node._item.pos()
         group = self.selected_nodes() if self.is_node_selected(node) else [node]
-        group = [member for member in group if member._item is not None]
+        group = [member for member in self._with_group_contents(group) if member._item is not None]
         self._move_group = [(member, QPointF(member._item.pos())) for member in group]
         # Raise the moved nodes above the others, keeping their stacking order and the grabbed one on top.
         for member in sorted(group, key=lambda member: (member is node, member._item.zValue())):
             self.raise_node(member)
         self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
 
-    def _begin_resize(self, node: NotesNodeWidget, handle: ResizeHandle, pos: QPoint) -> None:
-        """Start resizing the note ``node`` by dragging ``handle``."""
+    def _begin_resize(self, node: BoxNodeWidget, handle: ResizeHandle, pos: QPoint) -> None:
+        """Start resizing the note or group ``node`` by dragging ``handle``."""
         self._clear_scene_focus()
         self._gesture = _Gesture.RESIZING
         self._resize_node = node
         self._resize_edges = handle.edges
         self._resized = False
         self._press_scene_pos = self.mapToScene(pos)
-        self._resize_start = QRectF(node._item.pos(), QSizeF(*node.GetNoteSize()))
+        self._resize_start = QRectF(node._item.pos(), QSizeF(*node.GetBoxSize()))
         self.raise_node(node)
         self.viewport().setCursor(handle.cursor())
 
     def _update_resize(self, pos: QPoint) -> None:
-        """Move the grabbed edges of the note to the mouse; the opposite edges stay in place."""
+        """Move the grabbed edges of the note or group to the mouse; the opposite edges stay in place."""
         node = self._resize_node
         if node is None or node._item is None:
             return
@@ -1184,7 +1223,7 @@ class TreeView(QGraphicsView):
             height -= offset.y()
         elif edges & BOTTOM:
             height += offset.y()
-        width, height = node._resize_note(width, height)
+        width, height = node._resize_box(width, height)
         x = start.right() - width if edges & LEFT else start.left()
         y = start.bottom() - height if edges & TOP else start.top()
         node._item.setPos(QPointF(x, y))
@@ -1222,7 +1261,10 @@ class TreeView(QGraphicsView):
             node
             for node in self._nodes
             if node._item is not None and rect.width() > 0 and rect.height() > 0
-            and node._item.sceneBoundingRect().intersects(rect)
+            and (
+                # A group is selected by touching its title bar (a rectangle inside it selects its nodes).
+                node.scene_header_rect() if isinstance(node, GroupNodeWidget) else node._item.sceneBoundingRect()
+            ).intersects(rect)
         ]
         self._set_selection({**self._band_base, **dict.fromkeys(touched)})
 
@@ -1339,6 +1381,8 @@ class TreeView(QGraphicsView):
             # A note has no input widget besides its text editor; its item can keep the scene focus
             # after editing ended (e.g. while the window was inactive), which must not block the keys.
             return False
+        if isinstance(item, NodeItem) and isinstance(item.node, GroupNodeWidget) and not item.node.name_editor().hasFocus():
+            return False  # likewise for a group whose name editor does not have the keyboard
         return item is not None
 
     def event(self, event) -> bool:  # noqa: D102 - Qt API
@@ -1538,11 +1582,14 @@ class TreeView(QGraphicsView):
         return node
 
     def build_node_menu(self, node: NodeWidget) -> QMenu:
-        """Context menu of ``node``: rename (a note: edit its text), select children, composite
-        options and delete."""
+        """Context menu of ``node``: rename (a note: edit its text), Zoom In (a Sub-Tree node),
+        select children, composite options, group options (select contents, border color,
+        promote to sub-tree) and delete."""
         menu = QMenu(self)
         menu.setObjectName("NodeMenu")
-        if isinstance(node, NotesNodeWidget):
+        if isinstance(node, GroupNodeWidget):
+            self._add_group_actions(menu, node)
+        elif isinstance(node, NotesNodeWidget):
             edit = menu.addAction("Edit Text")
             edit.setObjectName("EditText")
             edit.triggered.connect(lambda _checked=False, n=node: self._edit_note(n))
@@ -1550,6 +1597,14 @@ class TreeView(QGraphicsView):
             rename = menu.addAction("Rename...")
             rename.setObjectName("Rename")
             rename.triggered.connect(lambda _checked=False, n=node: self._rename_node(n))
+        if isinstance(node, SubTreeNodeWidget):
+            zoom = menu.addAction("Zoom In")
+            zoom.setObjectName("ZoomIn")
+            zoom.setToolTip("Show the tree in this node's file in place of this tree (Go Back returns here).")
+            if not node.GetFile().strip():
+                zoom.setEnabled(False)
+                zoom.setText("Zoom In (choose a file first)")
+            zoom.triggered.connect(lambda _checked=False, n=node: self._zoom_in(n))
         if node.HasChildConnections():
             select_children = menu.addAction("Select Children")
             select_children.setObjectName("SelectChildren")
@@ -1588,6 +1643,81 @@ class TreeView(QGraphicsView):
             delete.setText("Delete (stop execution first)")
         delete.triggered.connect(lambda _checked=False, n=node: self._delete_node_from_menu(n))
         return menu
+
+    def _add_group_actions(self, menu: QMenu, group: GroupNodeWidget) -> None:
+        rename = menu.addAction("Rename...")
+        rename.setObjectName("Rename")
+        rename.triggered.connect(lambda _checked=False, n=group: self._rename_node(n))
+        contents = menu.addAction("Select Contents")
+        contents.setObjectName("SelectContents")
+        contents.setToolTip("Select this group and every node lying completely inside it.")
+        contents.triggered.connect(lambda _checked=False, n=group: self._select_group_contents(n))
+        colors = menu.addMenu("Border Color")
+        colors.setObjectName("BorderColor")
+        current = group.GetBorderColor()
+        palette = QActionGroup(colors)
+        palette.setExclusive(True)
+        for name, color in GROUP_COLORS.items():
+            action = colors.addAction(self._color_icon(color), name)
+            action.setObjectName(f"Color_{name}")
+            action.setCheckable(True)
+            action.setChecked(color == current)
+            palette.addAction(action)
+            action.triggered.connect(lambda _checked=False, n=group, c=color: self._set_group_color(n, c))
+        colors.addSeparator()
+        custom = colors.addAction("Custom...")
+        custom.setObjectName("Color_Custom")
+        custom.setCheckable(True)
+        custom.setChecked(current not in GROUP_COLORS.values())
+        palette.addAction(custom)
+        custom.triggered.connect(lambda _checked=False, n=group: self._choose_group_color(n))
+        menu.addSeparator()
+        promote = menu.addAction("Promote to Sub-Tree")
+        promote.setObjectName("PromoteToSubTree")
+        promote.setToolTip(
+            "Write the nodes in this group to <group name>_BT.json and replace the group with a "
+            "Sub-Tree node running that file."
+        )
+        if self._locked:
+            promote.setEnabled(False)
+            promote.setText("Promote to Sub-Tree (stop execution first)")
+        promote.triggered.connect(lambda _checked=False, n=group: self._promote_group(n))
+
+    @staticmethod
+    def _color_icon(color: str) -> QIcon:
+        pixmap = QPixmap(14, 14)
+        pixmap.fill(QColor(color))
+        return QIcon(pixmap)
+
+    def _select_group_contents(self, group: GroupNodeWidget) -> None:
+        if self._is_current(group):
+            self.select_nodes([group, *self.group_contents(group)])
+
+    def _set_group_color(self, group: GroupNodeWidget, color: QColor | str) -> None:
+        if self._is_current(group) and group._apply_color(QColor(color).name(), runtime=False):
+            self.modified.emit()  # a user edit, also while executing
+
+    def _choose_group_color(self, group: GroupNodeWidget) -> None:
+        if not self._is_current(group):
+            return
+        color = self._choose_color(QColor(group.GetBorderColor()))
+        if color is not None and color.isValid() and self._is_current(group):
+            self._set_group_color(group, color)
+
+    def _choose_color(self, initial: QColor) -> QColor | None:
+        """Ask for a colour (separate method so tests can replace the dialog); None if cancelled."""
+        color = QColorDialog.getColor(initial, self, "Group Border Color")
+        return color if color.isValid() else None
+
+    def _zoom_in(self, node: SubTreeNodeWidget) -> None:
+        if self._owner is None or not self._is_current(node):
+            return
+        self._owner._zoom_in_interactively(node)
+
+    def _promote_group(self, group: GroupNodeWidget) -> None:
+        if self._locked or self._owner is None or not self._is_current(group):
+            return
+        self._owner._promote_group_interactively(group)
 
     def build_connection_menu(self, item: ConnectionItem) -> QMenu:
         menu = QMenu(self)

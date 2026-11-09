@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .tree_log import LogLevel
+
 
 @dataclass
 class TreeConfig:
@@ -31,18 +33,27 @@ class TreeConfig:
         default_memory: ``memory`` flag given to newly created Sequence/Selector
             nodes (see py_trees composites). With memory a composite resumes from
             its running child instead of re-ticking earlier children every tick.
+        log_level: The least important level of the messages written to the tree's log
+            (see :class:`~behavior_tree_widget.LogLevel`): 0 (None: nothing is logged),
+            1 (ERROR), 2 (WARNING), 3 (DEBUG) or 4 (INFO, the default: everything).
     """
 
     tick_interval_ms: int = 100
     repeat: bool = False
     restore_blackboard: bool = False
     default_memory: bool = True
+    log_level: int = int(LogLevel.INFO)
 
     MIN_TICK_MS = 1
     MAX_TICK_MS = 60_000
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        """The options as saved in a tree file. ``log_level`` is left out while it has its default
+        value, so a tree that does not use it is saved as earlier versions saved it."""
+        data = asdict(self)
+        if data["log_level"] == int(LogLevel.INFO):
+            del data["log_level"]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "TreeConfig":
@@ -56,6 +67,9 @@ class TreeConfig:
         for name in ("repeat", "restore_blackboard", "default_memory"):
             if isinstance(data.get(name), bool):
                 setattr(config, name, data[name])
+        level = data.get("log_level")
+        if isinstance(level, int) and not isinstance(level, bool) and min(LogLevel) <= level <= max(LogLevel):
+            config.log_level = level
         return config
 
     def copy(self) -> "TreeConfig":
@@ -101,9 +115,20 @@ class ConfigureDialog(QDialog):
             "re-ticking the children before it. Each composite can be changed from its right-click menu."
         )
 
+        self.log_level = QComboBox(self)
+        self.log_level.setObjectName("LogLevel")
+        for level in LogLevel:
+            self.log_level.addItem(level.label, int(level))
+        self.log_level.setCurrentIndex(max(0, self.log_level.findData(config.log_level)))
+        self.log_level.setToolTip(
+            "The least important messages written to the tree's log file:\n"
+            "0: None logs nothing; 4: INFO also logs the execution of every node."
+        )
+
         form = QFormLayout()
         form.addRow("Tick interval:", self.tick_interval)
         form.addRow("Execution:", self.run_mode)
+        form.addRow("Log level:", self.log_level)
         form.addRow(self.restore_blackboard)
         form.addRow(self.default_memory)
 
@@ -125,4 +150,5 @@ class ConfigureDialog(QDialog):
             repeat=self.run_mode.currentIndex() == 1,
             restore_blackboard=self.restore_blackboard.isChecked(),
             default_memory=self.default_memory.isChecked(),
+            log_level=int(self.log_level.currentData()),
         )

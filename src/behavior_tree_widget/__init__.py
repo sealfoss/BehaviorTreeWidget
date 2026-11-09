@@ -38,6 +38,7 @@ from .blackboard import BlackboardStore, BlackboardView  # noqa: E402
 from .blackboard_nodes import EvaluationNodeWidget, SetNodeWidget  # noqa: E402
 from .config import TreeConfig  # noqa: E402
 from .control_nodes import PauseNodeWidget, RestartNodeWidget, StopNodeWidget  # noqa: E402
+from .groups import GroupNodeWidget  # noqa: E402
 from .network_nodes import UdpMessageNodeWidget  # noqa: E402
 from .nodes import (  # noqa: E402
     CompositeNodeWidget,
@@ -48,35 +49,46 @@ from .nodes import (  # noqa: E402
     RootNodeWidget,
     UnknownLeafNodeWidget,
 )
-from .notes import NotesNodeWidget  # noqa: E402
-from .serialization import TreeFileError  # noqa: E402
+from .notes import BoxNodeWidget, NotesNodeWidget  # noqa: E402
+from .print_node import PrintMessageNodeWidget  # noqa: E402
+from .serialization import TreeFileError, tree_file_paths  # noqa: E402
+from .subtree import SubTreeNodeWidget  # noqa: E402
+from .tree_log import LogLevel, TreeLogger, flush_logs  # noqa: E402
 from .widget import BehaviorTreeWidget, register_node_type, registered_node_types  # noqa: E402
 
-__version__ = "0.6.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "BehaviorTreeWidget",
     "BlackboardStore",
     "BlackboardView",
+    "BoxNodeWidget",
     "CompositeNodeWidget",
     "EvaluationNodeWidget",
     "ExecutionCancelled",
+    "GroupNodeWidget",
     "LeafNodeWidget",
+    "LogLevel",
     "NegationNodeWidget",
     "NodeStatus",
     "NodeWidget",
     "NotesNodeWidget",
     "PauseNodeWidget",
+    "PrintMessageNodeWidget",
     "RestartNodeWidget",
     "RootNodeWidget",
     "SetNodeWidget",
     "Status",
     "StopNodeWidget",
+    "SubTreeNodeWidget",
     "TreeConfig",
     "TreeFileError",
+    "TreeLogger",
     "UdpMessageNodeWidget",
     "UnknownLeafNodeWidget",
+    "flush_logs",
     "register_node_type",
     "registered_node_types",
+    "tree_file_paths",
     "__version__",
 ]

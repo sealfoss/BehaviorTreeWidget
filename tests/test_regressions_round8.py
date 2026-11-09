@@ -23,7 +23,7 @@ from behavior_tree_widget.blackboard import FloatSpinBox
 from behavior_tree_widget.demo import _unconsumed_arguments
 from behavior_tree_widget.nodes import UnknownLeafNodeWidget
 
-from conftest import fast_config
+from conftest import fast_config, tree_file
 
 
 class Quick(LeafNodeWidget):
@@ -115,13 +115,15 @@ def build(widget, *types):
 
 
 def other_tree_file(make_widget, path, node_type="R8Endless"):
+    """Write a tree holding a root and one ``node_type`` leaf (named after ``path``); returns the
+    path of its tree file (``<name>_BT.json``)."""
     other = make_widget()
     for cls in TYPES:
         other.RegisterNodeType(cls)
     assert other.NewTree(str(path))
     build(other, node_type)
     assert other.SaveTree(str(path))
-    return str(path)
+    return tree_file(path)
 
 
 # ============================================================================ chained runs
@@ -446,7 +448,7 @@ def test_deep_raw_placeholder_data_does_not_block_saving(widget, make_widget, tm
     depth = _json_window()
     if depth is None:
         pytest.skip("json reads and writes the same depths on this Python")
-    base = str(tmp_path / "base.json")
+    base = str(tmp_path / "base_BT.json")
     assert widget.SaveTree(base)
     with open(base, encoding="utf-8") as handle:
         text = json.dumps(json.load(handle))
@@ -457,7 +459,7 @@ def test_deep_raw_placeholder_data_does_not_block_saving(widget, make_widget, tm
 
     other = make_widget()
     assert other.LoadTree(str(hand_written))  # the deep field is kept as read
-    out = str(tmp_path / "out.json")
+    out = str(tmp_path / "out_BT.json")
     assert other.SaveTree(out)
     with open(out, encoding="utf-8") as handle:
         saved = json.load(handle)

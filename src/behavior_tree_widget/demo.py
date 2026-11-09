@@ -162,6 +162,12 @@ class DemoWindow(QMainWindow):
         self.tree.nodeError.connect(lambda node, message: self._status.setText(f"{node.GetTitle()}: {message}"))
         self.tree.treeLoaded.connect(lambda path: self._status.setText(f"Loaded {path}"))
         self.tree.treeSaved.connect(lambda path: self._status.setText(f"Saved {path}"))
+        # The tree's log (Print Message nodes log at DEBUG by default); INFO lists every node run.
+        for level, signal in (("ERROR", self.tree.errorLogged), ("WARNING", self.tree.warningLogged),
+                              ("DEBUG", self.tree.debugLogged)):
+            signal.connect(
+                lambda message, level=level: self._status.setText(f"{level}: {(message.splitlines() or [''])[0]}")
+            )
         self.resize(1000, 720)
 
     def closeEvent(self, event):  # noqa: N802

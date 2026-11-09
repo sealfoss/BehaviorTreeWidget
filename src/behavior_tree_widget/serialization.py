@@ -29,6 +29,14 @@ from typing import Any
 
 FORMAT_NAME = "behavior_tree_widget"
 FORMAT_VERSION = 1
+#: ``format`` of a blackboard file (``<tree name>_BB.json``).
+BLACKBOARD_FORMAT_NAME = "behavior_tree_widget_blackboard"
+BLACKBOARD_FORMAT_VERSION = 1
+#: A tree is stored in two files: ``<tree name>_BT.json`` (the behavior tree: nodes,
+#: connections and options) and ``<tree name>_BB.json`` (its blackboard).
+TREE_FILE_SUFFIX = "_BT"
+BLACKBOARD_FILE_SUFFIX = "_BB"
+JSON_EXTENSION = ".json"
 
 _TAG_TUPLE = "__tuple__"
 _TAG_SET = "__set__"
@@ -228,10 +236,41 @@ def write_json_atomic(path: str, data: dict) -> None:
     """
     try:
         text = json.dumps(data, indent=2, ensure_ascii=False)
-        text.encode("utf-8")
+        content = text.encode("utf-8")
     except UnicodeEncodeError:
-        text = json.dumps(data, indent=2, ensure_ascii=True)
-    text += "\n"
+        content = json.dumps(data, indent=2, ensure_ascii=True).encode("ascii")
+    write_bytes_atomic(path, content + b"\n")
+
+
+def write_json_files_atomic(files: list[tuple[str, dict]]) -> None:
+    """Write several JSON files (see :func:`write_json_atomic`) as one change: if one of them
+    cannot be written, those already written get their previous content back (or are removed
+    when they did not exist), and the error is raised."""
+    written: list[tuple[str, bytes | None]] = []
+    try:
+        for path, data in files:
+            try:
+                with open(path, "rb") as stream:
+                    previous: bytes | None = stream.read()
+            except FileNotFoundError:
+                previous = None
+            write_json_atomic(path, data)
+            written.append((path, previous))
+    except BaseException:
+        for path, previous in reversed(written):
+            try:
+                if previous is None:
+                    os.remove(path)
+                else:
+                    write_bytes_atomic(path, previous)
+            except OSError:  # nothing more can be done; the error below is reported
+                pass
+        raise
+
+
+def write_bytes_atomic(path: str, content: bytes) -> None:
+    """Write ``content`` to ``path`` without leaving a partial file on failure (see
+    :func:`write_json_atomic`)."""
     path = os.path.realpath(path)
     directory = os.path.dirname(path)
     if os.path.isdir(path):
@@ -246,8 +285,8 @@ def write_json_atomic(path: str, data: dict) -> None:
     attributes = _windows_attributes(path) if existing is not None else 0
     handle, temp_path = _create_temp_file(path, directory)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(content)
         try:
             os.chmod(temp_path, mode)
         except OSError:
@@ -282,15 +321,91 @@ def write_json_atomic(path: str, data: dict) -> None:
         raise
 
 
-def read_tree_file(path: str) -> dict:
-    """Read and minimally validate a behavior tree file, returning the parsed dict."""
+def tree_name(path: str) -> str:
+    """The tree name of a file path: its file name without ``.json`` and without a ``_BT`` /
+    ``_BB`` suffix (case-insensitive), e.g. ``robot`` for ``robot_BT.json`` and ``robot.json``."""
+    name = os.path.basename(path)
+    if name.lower().endswith(JSON_EXTENSION):
+        name = name[: -len(JSON_EXTENSION)]
+    for suffix in (TREE_FILE_SUFFIX, BLACKBOARD_FILE_SUFFIX):
+        if name.upper().endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def tree_file_paths(path: str) -> tuple[str, str]:
+    """``(tree file, blackboard file)`` of the tree named by ``path``.
+
+    The files lie in the folder of ``path`` and are named ``<tree name>_BT.json`` and
+    ``<tree name>_BB.json`` (see :func:`tree_name`): ``robot.json``, ``robot_BT.json`` and
+    ``robot_BB.json`` all name the files ``robot_BT.json`` and ``robot_BB.json``.
+    """
+    directory = os.path.dirname(path)
+    name = tree_name(path)
+    return (
+        os.path.join(directory, f"{name}{TREE_FILE_SUFFIX}{JSON_EXTENSION}"),
+        os.path.join(directory, f"{name}{BLACKBOARD_FILE_SUFFIX}{JSON_EXTENSION}"),
+    )
+
+
+def is_blackboard_file_name(path: str) -> bool:
+    """True if ``path`` is named like a blackboard file (``<tree name>_BB.json``)."""
+    name = os.path.basename(path)
+    if name.lower().endswith(JSON_EXTENSION):
+        name = name[: -len(JSON_EXTENSION)]
+    return name.upper().endswith(BLACKBOARD_FILE_SUFFIX) and len(name) > len(BLACKBOARD_FILE_SUFFIX)
+
+
+def blackboard_path_for(tree_path: str) -> str:
+    """The blackboard file belonging to the tree file ``tree_path`` (also for files named the
+    way earlier versions did, e.g. ``robot.json`` -> ``robot_BB.json``)."""
+    return tree_file_paths(tree_path)[1]
+
+
+def blackboard_document(items: list) -> dict:
+    """The JSON document of a blackboard file holding ``items`` (``BlackboardStore.to_list()``)."""
+    return {"format": BLACKBOARD_FORMAT_NAME, "version": BLACKBOARD_FORMAT_VERSION, "blackboard": items}
+
+
+def _read_json(path: str) -> Any:
     try:
         with open(path, "r", encoding="utf-8-sig") as stream:
-            data = json.load(stream)
+            return json.load(stream)
     except OSError as error:
         raise TreeFileError(f"Could not read '{path}': {error.strerror or error}") from error
     except (ValueError, RecursionError, MemoryError) as error:  # JSONDecodeError / UnicodeDecodeError are ValueErrors
         raise TreeFileError(f"'{os.path.basename(path)}' is not a valid JSON file: {error}") from error
+
+
+def read_blackboard_file(path: str) -> list:
+    """Read a blackboard file (``<tree name>_BB.json``) and return its list of entries.
+
+    The entries themselves are checked when they are loaded (see ``BlackboardStore.parse_list``).
+
+    Raises:
+        TreeFileError: the file cannot be read or is not a blackboard file.
+    """
+    data = _read_json(path)
+    name = os.path.basename(path)
+    if not isinstance(data, dict) or data.get("format") != BLACKBOARD_FORMAT_NAME:
+        raise TreeFileError(f"'{name}' is not a blackboard file.")
+    version = data.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise TreeFileError(f"'{name}' has an invalid format version: {version!r}")
+    if version > BLACKBOARD_FORMAT_VERSION:
+        raise TreeFileError(
+            f"'{name}' was written by a newer version of behavior_tree_widget "
+            f"(format {version}; this version reads up to {BLACKBOARD_FORMAT_VERSION})."
+        )
+    items = data.get("blackboard", [])
+    if not isinstance(items, list):
+        raise TreeFileError(f"'{name}' is malformed: 'blackboard' must be a list.")
+    return items
+
+
+def read_tree_file(path: str) -> dict:
+    """Read and minimally validate a behavior tree file, returning the parsed dict."""
+    data = _read_json(path)
     if not isinstance(data, dict) or data.get("format") != FORMAT_NAME:
         raise TreeFileError(f"'{os.path.basename(path)}' is not a behavior tree file.")
     version = data.get("version")

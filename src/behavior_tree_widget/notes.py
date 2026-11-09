@@ -24,7 +24,7 @@ from .nodes import NodeWidget
 
 log = logging.getLogger("behavior_tree_widget")
 
-__all__ = ["NOTES", "NotesNodeWidget", "ResizeHandle", "fitted_pixel_size"]
+__all__ = ["NOTES", "BoxNodeWidget", "NotesNodeWidget", "ResizeHandle", "fitted_pixel_size"]
 
 NOTES = "Notes"
 
@@ -184,7 +184,150 @@ class _NoteEditor(QPlainTextEdit):
             self.focusLost.emit()
 
 
-class NotesNodeWidget(NodeWidget):
+class BoxNodeWidget(NodeWidget):
+    """Base class of the nodes drawn as resizable boxes: Notes and Groups.
+
+    They are not part of the behavior tree: they have no connections, are never executed
+    and have no status. Dragging an edge or a corner resizes them (the tree view does the
+    resizing, see ``TreeView``); ``GetBoxSize`` / ``SetBoxSize`` read and change the size.
+    Subclasses build their contents, then call :meth:`_create_handles`.
+    """
+
+    DEFAULT_SIZE = (220, 120)
+    MIN_SIZE = (60, 30)
+    MAX_SIZE = 2000  # per side: room the view keeps for a node's size (canvas.SCENE_MARGIN)
+
+    def __init__(self, parent: QWidget | None = None):
+        self._box_size = QSize(*self.DEFAULT_SIZE)
+        super().__init__(parent)
+        self._title_label.hide()
+        self._status_label.hide()
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _create_handles(self) -> None:
+        """Add the eight resize handles (children of the node itself, so they lie above its contents)."""
+        self._handles = [ResizeHandle(edges, self) for edges in _EDGE_NAMES]
+        self._notify_geometry()
+
+    @classmethod
+    def HasParentConnection(cls) -> bool:
+        return False
+
+    # ------------------------------------------------------------------ size
+    def GetBoxSize(self) -> tuple[int, int]:
+        """``(width, height)`` of the box."""
+        size = self._box_size
+        return size.width(), size.height()
+
+    def SetBoxSize(self, width: float, height: float) -> None:
+        """Resize the box, keeping its top-left corner (thread-safe).
+
+        The size is rounded and limited to ``MIN_SIZE`` .. ``MAX_SIZE``.
+
+        Raises:
+            TypeError: a size is not a number.
+            ValueError: a size is not finite.
+        """
+        check_not_cancelled("SetBoxSize")
+        self._set_box_size(width, height)
+
+    def _set_box_size(self, width: float, height: float) -> None:
+        size = self.clamped_size(width, height)
+        runtime = self._is_runtime_change()
+        self._call_in_gui_thread(self._on_size_set, size, runtime)
+
+    def _on_size_set(self, size: tuple[int, int], runtime: bool = False) -> None:
+        if size != self.GetBoxSize():
+            self._resize_box(*size)
+            self.changed.emit(runtime)
+
+    @classmethod
+    def clamped_size(cls, width: Any, height: Any) -> tuple[int, int]:
+        """``(width, height)`` rounded and limited to ``MIN_SIZE`` .. ``MAX_SIZE``."""
+        result = []
+        for value, minimum in ((width, cls.MIN_SIZE[0]), (height, cls.MIN_SIZE[1])):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{cls._size_noun()} sizes must be numbers, not {type(value).__name__}")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{cls._size_noun()} sizes must be finite, not {value!r}")
+            result.append(min(max(round(value), minimum), cls.MAX_SIZE))
+        return result[0], result[1]
+
+    @classmethod
+    def _size_noun(cls) -> str:
+        return "box"
+
+    def _resize_box(self, width: float, height: float) -> tuple[int, int]:
+        """Apply a size (clamped) without reporting a change; returns it. GUI thread only.
+
+        The tree view uses it while the user drags a handle and reports the change once.
+        """
+        width, height = self.clamped_size(width, height)
+        size = QSize(width, height)
+        if size != self._box_size:
+            self._box_size = size
+            self._notify_geometry()
+        return width, height
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self._box_size)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self._box_size)
+
+    def _notify_geometry(self) -> None:
+        # Unlike other nodes, a box does not take the size of its contents.
+        self.updateGeometry()
+        self.resize(self._box_size)
+        self._place_handles()
+        self.geometryHintChanged.emit()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place_handles()
+
+    def _place_handles(self) -> None:
+        handles = self.__dict__.get("_handles")
+        if not handles:
+            return
+        thickness, corner = ResizeHandle.THICKNESS, ResizeHandle.CORNER
+        width, height = self.width(), self.height()
+        geometry = {
+            TOP | LEFT: (0, 0, corner, corner),
+            TOP | RIGHT: (width - corner, 0, corner, corner),
+            BOTTOM | LEFT: (0, height - corner, corner, corner),
+            BOTTOM | RIGHT: (width - corner, height - corner, corner, corner),
+            TOP: (corner, 0, width - 2 * corner, thickness),
+            BOTTOM: (corner, height - thickness, width - 2 * corner, thickness),
+            LEFT: (0, corner, thickness, height - 2 * corner),
+            RIGHT: (width - thickness, corner, thickness, height - 2 * corner),
+        }
+        for handle in handles:
+            handle.setGeometry(*geometry[handle.edges])
+            handle.raise_()
+
+    def resize_handles(self) -> list[ResizeHandle]:
+        """The eight resize handles (for tests and customisation)."""
+        return list(self.__dict__.get("_handles") or [])
+
+    # ------------------------------------------------------------------ persistence
+    def _load_box_size(self, data: dict) -> None:
+        """Apply a saved ``width`` / ``height`` (invalid values are ignored with a warning)."""
+        size = list(self.GetBoxSize())
+        for index, key in enumerate(("width", "height")):
+            value = data.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                log.warning("%s: ignoring saved %s %r", self, key, value)
+                continue
+            size[index] = value
+        self._resize_box(*size)
+
+
+class NotesNodeWidget(BoxNodeWidget):
     """A note documenting a part of the tree: a resizable box of text (see the module docs).
 
     It has no connections and is never executed. ``GetText``/``SetText`` and
@@ -205,12 +348,8 @@ class NotesNodeWidget(NodeWidget):
 
     def __init__(self, parent: QWidget | None = None):
         self._text = ""
-        self._note_size = QSize(*self.DEFAULT_SIZE)
         self._editing = False
         super().__init__(parent)
-        self._title_label.hide()
-        self._status_label.hide()
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         layout = self._ui.layout()
         if layout is None:
             layout = QVBoxLayout(self._ui)
@@ -223,14 +362,13 @@ class NotesNodeWidget(NodeWidget):
         self._editor.escapePressed.connect(self._on_editor_escape)
         self._editor.focusLost.connect(self.finish_editing)
         self._text_label.resized.connect(self._sync_editor)
-        # Children of the node itself, so they lie above the text and the editor.
-        self._handles = [ResizeHandle(edges, self) for edges in _EDGE_NAMES]
+        self._create_handles()  # children of the node itself, so they lie above the text and the editor
         self._refresh_text()
         self._notify_geometry()
 
     @classmethod
-    def HasParentConnection(cls) -> bool:
-        return False
+    def _size_noun(cls) -> str:
+        return "note"
 
     def GetTypeName(self) -> str:
         return NOTES
@@ -354,8 +492,7 @@ class NotesNodeWidget(NodeWidget):
     # ------------------------------------------------------------------ size
     def GetNoteSize(self) -> tuple[int, int]:
         """``(width, height)`` of the note."""
-        size = self._note_size
-        return size.width(), size.height()
+        return self.GetBoxSize()
 
     def SetNoteSize(self, width: float, height: float) -> None:
         """Resize the note, keeping its top-left corner (thread-safe).
@@ -367,79 +504,11 @@ class NotesNodeWidget(NodeWidget):
             ValueError: a size is not finite.
         """
         check_not_cancelled("SetNoteSize")
-        size = self.clamped_size(width, height)
-        runtime = self._is_runtime_change()
-        self._call_in_gui_thread(self._on_size_set, size, runtime)
-
-    def _on_size_set(self, size: tuple[int, int], runtime: bool = False) -> None:
-        if size != self.GetNoteSize():
-            self._resize_note(*size)
-            self.changed.emit(runtime)
-
-    @classmethod
-    def clamped_size(cls, width: Any, height: Any) -> tuple[int, int]:
-        """``(width, height)`` rounded and limited to ``MIN_SIZE`` .. ``MAX_SIZE``."""
-        result = []
-        for value, minimum in ((width, cls.MIN_SIZE[0]), (height, cls.MIN_SIZE[1])):
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise TypeError(f"note sizes must be numbers, not {type(value).__name__}")
-            if isinstance(value, float) and not math.isfinite(value):
-                raise ValueError(f"note sizes must be finite, not {value!r}")
-            result.append(min(max(round(value), minimum), cls.MAX_SIZE))
-        return result[0], result[1]
+        self._set_box_size(width, height)
 
     def _resize_note(self, width: float, height: float) -> tuple[int, int]:
-        """Apply a size (clamped) without reporting a change; returns it. GUI thread only.
-
-        The tree view uses it while the user drags a handle and reports the change once.
-        """
-        width, height = self.clamped_size(width, height)
-        size = QSize(width, height)
-        if size != self._note_size:
-            self._note_size = size
-            self._notify_geometry()
-        return width, height
-
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(self._note_size)
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
-        return QSize(self._note_size)
-
-    def _notify_geometry(self) -> None:
-        # Unlike other nodes, a note does not take the size of its contents.
-        self.updateGeometry()
-        self.resize(self._note_size)
-        self._place_handles()
-        self.geometryHintChanged.emit()
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self._place_handles()
-
-    def _place_handles(self) -> None:
-        handles = self.__dict__.get("_handles")
-        if not handles:
-            return
-        thickness, corner = ResizeHandle.THICKNESS, ResizeHandle.CORNER
-        width, height = self.width(), self.height()
-        geometry = {
-            TOP | LEFT: (0, 0, corner, corner),
-            TOP | RIGHT: (width - corner, 0, corner, corner),
-            BOTTOM | LEFT: (0, height - corner, corner, corner),
-            BOTTOM | RIGHT: (width - corner, height - corner, corner, corner),
-            TOP: (corner, 0, width - 2 * corner, thickness),
-            BOTTOM: (corner, height - thickness, width - 2 * corner, thickness),
-            LEFT: (0, corner, thickness, height - 2 * corner),
-            RIGHT: (width - thickness, corner, thickness, height - 2 * corner),
-        }
-        for handle in handles:
-            handle.setGeometry(*geometry[handle.edges])
-            handle.raise_()
-
-    def resize_handles(self) -> list[ResizeHandle]:
-        """The eight resize handles (for tests and customisation)."""
-        return list(self._handles)
+        """Apply a size (clamped) without reporting a change; returns it (see ``_resize_box``)."""
+        return self._resize_box(width, height)
 
     # ------------------------------------------------------------------ persistence
     def _to_dict(self) -> dict:
@@ -454,15 +523,4 @@ class NotesNodeWidget(NodeWidget):
             self._refresh_text()
         elif text is not None:
             log.warning("%s: ignoring saved text of type %s", self, type(text).__name__)
-        size = list(self.GetNoteSize())
-        for index, key in enumerate(("width", "height")):
-            value = data.get(key)
-            if value is None:
-                continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or (
-                isinstance(value, float) and not math.isfinite(value)
-            ):
-                log.warning("%s: ignoring saved %s %r", self, key, value)
-                continue
-            size[index] = value
-        self._resize_note(*size)
+        self._load_box_size(data)

@@ -810,7 +810,8 @@ def test_copied_nodes_do_not_crash_the_process_at_exit(tmp_path):
         print("copied")
     """), encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, str(script), str(tmp_path / "tree.json")], capture_output=True, text=True, timeout=120
+        [sys.executable, str(script), str(tmp_path / "tree.json")], capture_output=True, text=True, timeout=120,
+        cwd=str(tmp_path),  # its log file goes there
     )
     assert "copied" in result.stdout, result.stderr
     assert result.returncode == 0, f"exit code {result.returncode}: {result.stderr}"

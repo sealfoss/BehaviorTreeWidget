@@ -301,7 +301,7 @@ def test_negation_is_saved_and_loaded(make_widget, bt, tmp_path):
     leaf = bt.AddNode(FailNode, 40, 420)
     bt.Connect(bt.GetRootNode(), negation)
     bt.Connect(negation, leaf)
-    path = tmp_path / "negation.json"
+    path = tmp_path / "negation_BT.json"
     assert bt.SaveTree(str(path))
     saved = {node["id"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
     assert saved[negation.GetId()]["type"] == "Negation"
@@ -323,7 +323,7 @@ def test_loading_a_negation_with_two_children_keeps_the_first(make_widget, bt, t
     first = bt.AddNode(Succeed, -100, 400)
     second = bt.AddNode(FailNode, 100, 400)
     bt.Connect(negation, first)
-    path = tmp_path / "two.json"
+    path = tmp_path / "two_BT.json"
     assert bt.SaveTree(str(path))
     data = json.loads(path.read_text(encoding="utf-8"))
     data["connections"].append({"parent": negation.GetId(), "child": second.GetId()})  # hand-edited file
@@ -792,7 +792,7 @@ def test_blackboard_nodes_are_saved_and_loaded(make_widget, bt, tmp_path):
     setter = bt.AddNode("Set", 200, 200)
     setter.SetValueName("i")
     setter.SetCompareTo("i2")
-    path = tmp_path / "bb.json"
+    path = tmp_path / "bb_BT.json"
     assert bt.SaveTree(str(path))
     saved = {node["id"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
     assert saved[evaluation.GetId()]["type"] == "Evaluation"
@@ -818,7 +818,7 @@ def test_blackboard_nodes_are_saved_and_loaded(make_widget, bt, tmp_path):
 
 def test_invalid_saved_values_are_ignored(make_widget, bt, tmp_path, caplog):
     node = bt.AddNode("Evaluation", 0, 200)
-    path = tmp_path / "bad.json"
+    path = tmp_path / "bad_BT.json"
     assert bt.SaveTree(str(path))
     data = json.loads(path.read_text(encoding="utf-8"))
     for item in data["nodes"]:

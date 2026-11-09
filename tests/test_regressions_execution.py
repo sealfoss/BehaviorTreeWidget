@@ -33,7 +33,7 @@ from PySide6.QtWidgets import QLabel
 
 from behavior_tree_widget import BehaviorTreeWidget, ExecutionCancelled, LeafNodeWidget, NodeStatus
 from behavior_tree_widget.execution import LeafBehaviour
-from behavior_tree_widget.serialization import write_json_atomic
+from behavior_tree_widget.serialization import blackboard_document, tree_file_paths, write_json_atomic
 from conftest import Succeed, assert_blackboard_in_file, fast_config, run_until_idle
 
 READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
@@ -416,14 +416,16 @@ def save(bt) -> None:
 
 
 def make_other_tree_file(qtbot, bt, path) -> bool:
-    """Write a tree file like the current tree, with an Integer entry y = 3 added to its blackboard.
+    """Write a tree like the current tree, with an Integer entry y = 3 added to its blackboard, to
+    the tree file and the blackboard file named after ``path`` (``<name>_BT.json`` / ``<name>_BB.json``).
 
-    The widget keeps its own file and blackboard. (Saving there and removing y again would
-    write the removal into that file: blackboard changes go to the current tree file.)
+    The widget keeps its own files and blackboard. (Saving there and removing y again would
+    write the removal into those files: blackboard changes go to the current blackboard file.)
     """
-    data = bt._tree_data(quiet=True)
-    data["blackboard"] = [*data["blackboard"], {"name": "y", "type": "Integer", "value": 3}]
-    write_json_atomic(str(path), data)
+    tree_path, blackboard_path = tree_file_paths(str(path))
+    write_json_atomic(tree_path, bt._tree_data(quiet=True))
+    blackboard = [*bt.blackboardStore().to_list(quiet=True), {"name": "y", "type": "Integer", "value": 3}]
+    write_json_atomic(blackboard_path, blackboard_document(blackboard))
     return True
 
 

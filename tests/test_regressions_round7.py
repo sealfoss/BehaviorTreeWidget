@@ -23,7 +23,7 @@ from behavior_tree_widget.blackboard import FloatSpinBox
 from behavior_tree_widget.execution import LeafBehaviour
 from behavior_tree_widget.serialization import MAX_NESTING, decode_value, encode_value, is_encodable
 
-from conftest import fast_config, run_until_idle
+from conftest import fast_config, run_until_idle, tree_file
 
 
 class Endless(LeafNodeWidget):
@@ -92,14 +92,15 @@ def build(widget, *types):
 
 
 def other_tree_file(make_widget, path, node_type="R7Quick"):
-    """Write a tree file holding a root and one ``node_type`` leaf; returns its path."""
+    """Write a tree holding a root and one ``node_type`` leaf (named after ``path``); returns the
+    path of its tree file (``<name>_BT.json``)."""
     other = make_widget()
     for cls in TYPES:
         other.RegisterNodeType(cls)
     assert other.NewTree(str(path))
     build(other, node_type)
     assert other.SaveTree(str(path))
-    return str(path)
+    return tree_file(path)
 
 
 # ============================================================================ deferred first tick
@@ -129,7 +130,7 @@ def test_load_tree_while_the_deferred_first_tick_is_pending(qtbot, widget, make_
 def test_new_tree_from_an_execution_finished_slot_after_a_chained_execute(qtbot, widget, tmp_path):
     build(widget, Quick)
     fast_config(widget)
-    target = str(tmp_path / "fresh.json")
+    target = str(tmp_path / "fresh_BT.json")
     results = []
     armed = {"on": True}
 
@@ -327,7 +328,7 @@ def test_demo_loads_a_file_whose_name_is_not_in_the_ansi_code_page(make_widget, 
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
     result = subprocess.run(
         [sys.executable, "-c", _DEMO_DRIVER, "demo", *qt_options, target],
-        env=env, capture_output=True, timeout=120,
+        env=env, capture_output=True, timeout=120, cwd=str(tmp_path),  # its log file goes there
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
     assert result.stdout.decode("utf-8") == repr(os.path.abspath(target))
@@ -349,7 +350,7 @@ def test_a_huge_integer_entry_is_skipped_when_saving(widget, make_widget, tmp_pa
     widget.SetEntry(7, "keep_me")
     path = str(tmp_path / "saved.json")
     assert widget.SaveTree(path)
-    with open(path, encoding="utf-8") as handle:
+    with open(tmp_path / "saved_BB.json", encoding="utf-8") as handle:
         names = [entry["name"] for entry in json.load(handle)["blackboard"]]
     assert "keep_me" in names and "huge_set" not in names and "huge_list" not in names
 
@@ -384,7 +385,7 @@ def test_everything_that_is_written_can_be_read_back(kind):
 def test_a_deeply_nested_field_is_reported_when_saving_instead_of_lost_when_loading(widget, make_widget, tmp_path):
     (holder,) = build(widget, Holder)
     holder.SetField("path", _nested("tuple", MAX_NESTING + 50))
-    path = str(tmp_path / "deep.json")
+    path = str(tmp_path / "deep_BT.json")
     assert widget.SaveTree(path)
     with open(path, encoding="utf-8") as handle:
         saved = json.load(handle)

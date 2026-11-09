@@ -213,7 +213,7 @@ def test_set_with_broken_repr_is_skipped_when_saving(widget, tmp_path):
     widget.SetEntry(1, "good")
     path = str(tmp_path / "s.json")
     assert widget.SaveTree(path)
-    names = [entry["name"] for entry in json.load(open(path, encoding="utf-8"))["blackboard"]]
+    names = [entry["name"] for entry in json.load(open(tmp_path / "s_BB.json", encoding="utf-8"))["blackboard"]]
     assert names == ["good"]
 
 
@@ -330,6 +330,6 @@ def test_unknown_placeholder_keeps_selections_verbatim(make_widget, tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     widget = make_widget(node_types=[])
     assert widget.LoadTree(str(path))
-    assert widget.SaveTree(str(path))
-    node = [n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
+    assert widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
+    node = [n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
     assert node["field_selections"] == selections

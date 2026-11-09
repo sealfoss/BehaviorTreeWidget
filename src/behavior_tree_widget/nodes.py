@@ -551,7 +551,8 @@ class NodeWidget(QWidget):
 
     def _order_key(self) -> tuple[float, float]:
         if self._item is None:
-            return (0.0, 0.0)
+            # Nodes of a sub-tree are not in a view: their saved position orders them.
+            return self.__dict__.get("_detached_order") or (0.0, 0.0)
         rect = self._item.sceneBoundingRect()
         return (rect.center().x(), rect.top())
 

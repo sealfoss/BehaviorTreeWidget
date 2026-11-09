@@ -1,8 +1,9 @@
-"""The tree file is updated whenever the blackboard's keys or values change.
+"""The blackboard file is updated whenever the blackboard's keys or values change.
 
-Requirement: the behavior tree writes its file whenever the keys or values stored in the
-blackboard are modified, by the tree itself or by the user. Only the blackboard section is
-updated: other edits (nodes, configuration, ...) stay unsaved until Save.
+Requirement: the behavior tree writes its blackboard file (``<name>_BB.json``) whenever the keys
+or values stored in the blackboard are modified, by the tree itself or by the user. Only the
+blackboard file is written: the tree file is left alone, other edits (nodes, configuration, ...)
+stay unsaved until Save.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ def entry(name: str, type_name: str, value) -> dict:
 
 
 def file_value(bt, name: str, default=None):
-    """Value of blackboard entry ``name`` in the tree file (``default`` when it is not there yet)."""
+    """Value of blackboard entry ``name`` in the blackboard file (``default`` when it is not there yet)."""
     return next((item["value"] for item in file_blackboard(bt.GetFilePath()) if item["name"] == name), default)
 
 
@@ -129,21 +130,38 @@ def test_other_unsaved_edits_stay_unsaved(qtbot, bt):
 
 
 def test_the_rest_of_the_file_is_kept_as_it_was(qtbot, bt, tmp_path):
+    """A hand-written tree file in the single-file format of earlier versions (holding the blackboard
+    as well) is never rewritten by blackboard updates: the blackboard goes to <name>_BB.json."""
     path = tmp_path / "hand_written.json"
+    blackboard_path = tmp_path / "hand_written_BB.json"
     document = {
         "format": "behavior_tree_widget",
         "version": 1,
-        "comment": "kept by every blackboard update",
+        "comment": "left as it is by every blackboard update",
         "nodes": [{"id": "r", "type": "Root", "title": "Root", "x": 0, "y": 0}],
         "connections": [],
         "blackboard": [entry("a", "Integer", 1)],
         "config": {"tick_interval_ms": 50},
     }
-    path.write_text(json.dumps(document), encoding="utf-8")
+    text = json.dumps(document)
+    path.write_text(text, encoding="utf-8")
     assert bt.LoadTree(str(path))
+    assert bt.GetEntry("a") == 1  # the blackboard of the old file is loaded
+    assert bt.GetFilePath() == os.path.abspath(str(path))
+    assert bt.GetBlackboardFilePath() == os.path.abspath(str(blackboard_path))
+    assert not blackboard_path.exists()  # created at the first change of the blackboard
+    written = []
+    bt.blackboardSaved.connect(written.append)
     bt.SetEntry(2, "a")
-    qtbot.waitUntil(lambda: file_blackboard(path) == [entry("a", "Integer", 2)], timeout=3000)
-    assert read(path) == {**document, "blackboard": [entry("a", "Integer", 2)]}
+    qtbot.waitUntil(lambda: blackboard_path.exists() and file_blackboard(path) == [entry("a", "Integer", 2)], timeout=3000)
+    assert read(blackboard_path) == {
+        "format": "behavior_tree_widget_blackboard",
+        "version": 1,
+        "blackboard": [entry("a", "Integer", 2)],
+    }
+    assert written == [os.path.abspath(str(blackboard_path))]
+    assert path.read_text(encoding="utf-8") == text  # the old file is not touched at all
+    assert sorted(os.listdir(tmp_path)) == ["hand_written.json", "hand_written_BB.json", "tree_BB.json", "tree_BT.json"]
 
 
 def test_object_entries_do_not_cause_writes(qtbot, bt):
@@ -233,7 +251,7 @@ def test_nothing_is_written_before_a_tree_exists(qtbot, make_widget):
 # ============================================================================ failures
 @pytest.mark.skipif(os.name != "nt", reason="read-only files are a Windows permission")
 def test_a_failed_write_is_reported_and_retried(qtbot, bt, caplog):
-    path = bt.GetFilePath()
+    path = bt.GetBlackboardFilePath()
     failures = []
     bt.blackboardSaveFailed.connect(failures.append)
     os.chmod(path, stat.S_IREAD)

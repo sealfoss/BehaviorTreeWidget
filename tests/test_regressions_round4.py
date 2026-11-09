@@ -251,7 +251,7 @@ def test_closed_top_level_widget_is_freed(qtbot, tmp_path):
 
 # ============================================================================ view centre
 def test_view_centre_does_not_drift_over_save_load_cycles(qtbot, widget, tmp_path):
-    path = str(tmp_path / "centre.json")
+    path = str(tmp_path / "centre_BT.json")
     widget.view().centerOn(QPointF(123.25, 456.75))
     widget.SaveTree(path)
     first = json.load(open(path, encoding="utf-8"))["view"]["center"]
@@ -281,8 +281,8 @@ def test_unknown_placeholder_keeps_selections_of_raw_fields(make_widget, tmp_pat
     path.write_text(json.dumps(data), encoding="utf-8")
     widget = make_widget(node_types=[])
     assert widget.LoadTree(str(path))
-    widget.SaveTree(str(path))
-    node = [n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
+    widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
+    node = [n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m"][0]
     assert node["fields"]["choice"] == {"__set__": [[1, 2]]}
     assert node["field_selections"] == {"choice": 1, "plain": 1}
 
@@ -303,7 +303,7 @@ def test_non_str_field_keys_are_skipped_when_saving(widget, dialogs, tmp_path, c
     (quick,) = build(widget, Quick)
     quick.SetField((1, 2), "tuple key")
     quick.SetField("ok", 5)
-    path = str(tmp_path / "keys.json")
+    path = str(tmp_path / "keys_BT.json")
     assert widget.SaveTree(path)
     saved = [n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["type"] == "R4Quick"][0]
     assert saved["fields"] == {"ok": 5}

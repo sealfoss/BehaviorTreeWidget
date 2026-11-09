@@ -524,6 +524,17 @@ def _same_value(a: Any, b: Any) -> bool:
         return False
 
 
+def _equal_values(a: Any, b: Any) -> bool:
+    """Whether two entry values are equal (scalars as :func:`_same_value`; containers with ``==``)."""
+    containers = (list, tuple, set, frozenset, dict)
+    if isinstance(a, containers) or isinstance(b, containers):
+        try:
+            return type(a) is type(b) and bool(a == b)
+        except Exception:  # noqa: BLE001
+            return False
+    return _same_value(a, b)
+
+
 def _copy_value(type_name: str, value: Any) -> Any:
     if ENTRY_TYPES[type_name].container:
         return copy.deepcopy(value)
@@ -545,12 +556,18 @@ class BlackboardStore(QObject):
     entryRenamed = Signal(str, str)  # old name, new name
     entryRetyped = Signal(str)
     entriesReordered = Signal()
-    changed = Signal(bool)  # any change; True for run-time changes
+    entryResetChanged = Signal(str)  # the Reset flag of an entry was switched (see set_reset)
+    changed = Signal(bool)  # any change of a value, name, type or the order; True for run-time changes
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self._lock = threading.RLock()
         self._types: dict[str, str] = {}
+        self._reset: set[str] = set()  # entries put back to their loop-start value after each loop
+        # While an execution loop runs: the value each entry had when the loop started, recorded
+        # just before its first change in the loop ({name: (type, value)}, or None for an entry
+        # created during the loop, which has no loop-start value); None while no loop runs.
+        self._loop_capture: dict[str, tuple[str, Any] | None] | None = None
         self._disposed = False
         self._runtime_active = False
         self._gui_thread = threading.get_ident()
@@ -642,8 +659,99 @@ class BlackboardStore(QObject):
     def _notify(self, runtime: bool) -> None:
         self.changed.emit(runtime)
 
-    def add(self, name: str, type_name: str, value: Any = None) -> None:
-        """Create entry ``name`` of ``type_name`` (default value if ``value`` is None)."""
+    # ------------------------------------------------------------------ Reset flags
+    def is_reset(self, name: str) -> bool:
+        """True if entry ``name`` goes back to its loop-start value at the end of each execution loop."""
+        with self._lock:
+            self.type_of(name)
+            return name in self._reset
+
+    def reset_names(self) -> list[str]:
+        """Names of the entries whose Reset flag is set, in display order."""
+        with self._lock:
+            return [name for name in self._types if name in self._reset]
+
+    def set_reset(self, name: str, reset: bool) -> None:
+        """Set the Reset flag of entry ``name`` (thread-safe; raises KeyError if it does not exist).
+
+        At the end of every execution loop (the Root returned, or execution was stopped or
+        restarted), an entry with the flag gets back the value it had when the loop started.
+        """
+        reset = bool(reset)
+        with self._lock:
+            self._check_writable("Changing the Reset flag of an entry")
+            self.type_of(name)
+            if (name in self._reset) == reset:
+                return
+            if reset:
+                self._reset.add(name)
+            else:
+                self._reset.discard(name)
+        self.entryResetChanged.emit(name)
+
+    # ------------------------------------------------------------------ execution loops
+    def start_loop_capture(self) -> None:
+        """Start recording the loop-start value of every entry changed from now on (an execution
+        loop begins). Each entry's value is recorded just before its first change."""
+        with self._lock:
+            self._loop_capture = {}
+
+    def finish_loop_capture(self) -> dict[str, tuple[str, Any]]:
+        """Stop recording and return ``{name: (type, value)}``: the loop-start value of every
+        entry changed since :meth:`start_loop_capture` (empty when no loop was recorded).
+        Entries created during the loop are left out: they had no value when it started."""
+        with self._lock:
+            captured, self._loop_capture = self._loop_capture, None
+        return {name: start for name, start in (captured or {}).items() if start is not None}
+
+    def is_capturing(self) -> bool:
+        with self._lock:
+            return self._loop_capture is not None
+
+    def _capture_locked(self, name: str) -> None:
+        """Record the value of ``name`` before it changes (caller holds the lock)."""
+        capture = self._loop_capture
+        if capture is None or name in capture or name not in self._types:
+            return
+        type_name = self._types[name]
+        value = self._client.get(self.key(name))
+        if type_name != "Object":
+            try:
+                value = copy.deepcopy(value)
+            except Exception:  # noqa: BLE001 - uncopyable objects are kept by reference
+                pass
+        capture[name] = (type_name, value)
+
+    def reset_entries(self, captured: dict[str, tuple[str, Any]]) -> list[str]:
+        """Put every entry with the Reset flag back to its value in ``captured`` (see
+        :meth:`finish_loop_capture`). Returns the names of the entries that changed."""
+        changed = []
+        for name, (type_name, value) in captured.items():
+            with self._lock:
+                if self._disposed or name not in self._reset or self._types.get(name) is None:
+                    continue
+                current_type = self._types[name]
+                current = self._client.get(self.key(name))
+            if current_type == type_name and _equal_values(current, value):
+                continue
+            if type_name != "Object":
+                try:
+                    value = copy.deepcopy(value)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                self.replace(name, type_name, value)
+            except (TypeError, ValueError, KeyError, RuntimeError) as error:
+                log.warning("could not reset blackboard entry %r: %s", name, error)
+                continue
+            changed.append(name)
+        return changed
+
+    def add(self, name: str, type_name: str, value: Any = None, reset: bool = False) -> None:
+        """Create entry ``name`` of ``type_name`` (default value if ``value`` is None).
+
+        ``reset`` sets its Reset flag (see :meth:`set_reset`).
+        """
         type_name = canonical_type(type_name)
         if value is None and type_name != "Object":
             value = ENTRY_TYPES[type_name].default
@@ -655,6 +763,12 @@ class BlackboardStore(QObject):
             self._client.register_key(key=name, access=py_trees.common.Access.WRITE)
             self._client.set(self.key(name), value, overwrite=True)
             self._types[name] = type_name
+            if self._loop_capture is not None:
+                self._loop_capture[name] = None  # created during the loop: it has no loop-start value
+            if reset:
+                self._reset.add(name)
+            else:
+                self._reset.discard(name)
         self.entryAdded.emit(name)
         self._notify(runtime)
 
@@ -677,6 +791,7 @@ class BlackboardStore(QObject):
                     self.add(name, "Object", value)
                 return
             value = coerce_value(type_name, value)
+            self._capture_locked(name)
             self._client.set(self.key(name), value, overwrite=True)
         self.entryChanged.emit(name)
         self._notify(runtime)
@@ -692,6 +807,7 @@ class BlackboardStore(QObject):
             if old_type is None:
                 self.add(name, type_name, value)
                 return
+            self._capture_locked(name)
             self._client.set(self.key(name), value, overwrite=True)
             self._types[name] = type_name
         if old_type == type_name:
@@ -706,6 +822,9 @@ class BlackboardStore(QObject):
             self._check_writable("RemoveEntry")
             self.type_of(name)
             del self._types[name]
+            self._reset.discard(name)
+            if self._loop_capture is not None:
+                self._loop_capture.pop(name, None)  # a removed entry is not brought back
             self._client.unregister_key(key=name, clear=True)
         self.entryRemoved.emit(name)
         self._notify(runtime)
@@ -724,12 +843,40 @@ class BlackboardStore(QObject):
             self._client.set(self.key(new), value, overwrite=True)
             # keep the display position of the renamed entry
             self._types = {(new if key == old else key): kind for key, kind in self._types.items()}
+            if old in self._reset:  # the Reset flag and the loop-start value follow the entry
+                self._reset.discard(old)
+                self._reset.add(new)
+            if self._loop_capture is not None and old in self._loop_capture:
+                self._loop_capture[new] = self._loop_capture.pop(old)
         self.entryRenamed.emit(old, new)
         self._notify(runtime)
 
     def clear(self) -> None:
         for name in self.names():
             self.remove(name)
+
+    def move(self, name: str, offset: int) -> int:
+        """Move entry ``name`` ``offset`` places down the list (up when negative), stopping at
+        either end; returns its new index (thread-safe; KeyError if it does not exist).
+
+        The order is the order of the Blackboard tab and of the blackboard file.
+        """
+        if isinstance(offset, bool) or not isinstance(offset, int):
+            raise TypeError(f"offset must be an int, not {type(offset).__name__}")
+        runtime = self._is_runtime()
+        with self._lock:
+            self._check_writable("Moving an entry")
+            self.type_of(name)
+            names = list(self._types)
+            index = names.index(name)
+            target = min(max(index + offset, 0), len(names) - 1)
+            if target == index:
+                return index
+            names.insert(target, names.pop(index))
+            self._types = {entry: self._types[entry] for entry in names}
+        self.entriesReordered.emit()
+        self._notify(runtime)  # an edit like a value change (or a run-time change from a running tree)
+        return target
 
     def reorder(self, names: list[str]) -> None:
         """Put the entries in the order of ``names`` (others follow in their current order)."""
@@ -780,14 +927,18 @@ class BlackboardStore(QObject):
             self.reorder(wanted)
 
     def to_list(self, problems: list[str] | None = None, quiet: bool = False) -> list[dict]:
-        """Entries as JSON-compatible dicts.
+        """Entries as JSON-compatible dicts (``name``, ``type``, ``value``, and ``reset: true``
+        for entries whose Reset flag is set).
 
         Object entries (run-time values set from code) are never saved. Other values
         that cannot be written as JSON are skipped; a message is logged and appended to
         ``problems`` when given.
         """
         result = []
-        for name, type_name, value in self.items():
+        with self._lock:
+            entries = self.items()
+            reset = set(self._reset)
+        for name, type_name, value in entries:
             if type_name == "Object":
                 log.debug("blackboard entry %r is an Object entry (a run-time value) and is not saved", name)
                 continue
@@ -800,16 +951,30 @@ class BlackboardStore(QObject):
                 if problems is not None:
                     problems.append(message)
                 continue
-            result.append({"name": name, "type": type_name, "value": encoded})
+            item = {"name": name, "type": type_name, "value": encoded}
+            if name in reset:
+                item["reset"] = True
+            result.append(item)
         return result
 
     @staticmethod
     def parse_list(items: Any) -> tuple[list[tuple[str, str, Any]], list[str]]:
         """Validate :meth:`to_list` data; returns ``(entries, problems)`` without changing anything."""
+        entries, _, problems = BlackboardStore.parse_items(items)
+        return entries, problems
+
+    @staticmethod
+    def parse_items(items: Any) -> tuple[list[tuple[str, str, Any]], set[str], list[str]]:
+        """Validate :meth:`to_list` data without changing anything.
+
+        Returns ``(entries, reset, problems)``: ``(name, type, value)`` of the valid entries,
+        the names of those whose Reset flag is set, and messages about the invalid ones.
+        """
         entries: list[tuple[str, str, Any]] = []
+        reset: set[str] = set()
         problems: list[str] = []
         if not isinstance(items, list):
-            return entries, ["the blackboard section is not a list"]
+            return entries, reset, ["the blackboard section is not a list"]
         seen: set[str] = set()
         for index, item in enumerate(items):
             if not isinstance(item, dict):
@@ -831,7 +996,12 @@ class BlackboardStore(QObject):
                 continue
             seen.add(name)
             entries.append((name, type_name, value))
-        return entries, problems
+            flag = item.get("reset", False)
+            if flag is True:
+                reset.add(name)
+            elif flag is not False:
+                problems.append(f"blackboard entry {name!r}: 'reset' must be true or false, not {flag!r}; it is off")
+        return entries, reset, problems
 
     def load_list(self, items: Any, replace: bool = False) -> list[str]:
         """Add or overwrite entries from :meth:`to_list` data. Returns problems found.
@@ -839,7 +1009,7 @@ class BlackboardStore(QObject):
         With ``replace=True`` every entry that is not in ``items`` is removed first,
         except Object entries (run-time objects set from code, which are never saved).
         """
-        entries, problems = self.parse_list(items)
+        entries, reset, problems = self.parse_items(items)
         if replace:
             wanted = {name for name, _, _ in entries}
             for name in self.names():
@@ -851,6 +1021,7 @@ class BlackboardStore(QObject):
                     self.replace(name, type_name, value)
                 else:
                     self.add(name, type_name, value)
+                self.set_reset(name, name in reset)
             except (TypeError, ValueError, KeyError) as error:
                 problems.append(f"blackboard entry {name!r}: {error}")
         return problems
@@ -867,6 +1038,8 @@ class BlackboardStore(QObject):
             self._disposed = True
             names = list(self._types)
             self._types.clear()
+            self._reset.clear()
+            self._loop_capture = None
             try:
                 self._client.unregister(clear=True)
             except Exception:  # noqa: BLE001 - e.g. Blackboard.clear() was called globally
@@ -1006,8 +1179,16 @@ class EditContainerDialog(_ValueDialogBase):
         return self._value
 
 
+RESET_TOOLTIP = (
+    "Resets: at the end of every execution loop, this entry goes back to the value it had when the loop started"
+)
+MOVE_UP_TOOLTIP = "Move this entry up in the list"
+MOVE_DOWN_TOOLTIP = "Move this entry down in the list"
+
+
 class EntryRow(QWidget):
-    """One blackboard entry: Select checkbox, name QLineEdit and value editor."""
+    """One blackboard entry: Select checkbox, name QLineEdit, value editor, Resets checkbox and
+    the arrows moving the entry up and down in the list."""
 
     selectionToggled = Signal()
 
@@ -1034,11 +1215,23 @@ class EntryRow(QWidget):
         if self.select_box is None or self.name_edit is None or self.value_widget is None:
             raise RuntimeError(f"{spec.ui_file} must contain Select, ValueName and {spec.value_widget} widgets")
         self.edit_button: QToolButton | None = None
+        self.reset_box: QCheckBox | None = self._ui.findChild(QCheckBox, "Reset")
+        if self.reset_box is None:  # a ui file without the Resets check box
+            self.reset_box = QCheckBox("Resets", self._ui)
+            self.reset_box.setObjectName("Reset")
+            self._ui.layout().addWidget(self.reset_box)
+        self.reset_box.setToolTip(RESET_TOOLTIP)
+        self.move_up_button: QToolButton = self._move_button("MoveUp", Qt.ArrowType.UpArrow, MOVE_UP_TOOLTIP)
+        self.move_down_button: QToolButton = self._move_button("MoveDown", Qt.ArrowType.DownArrow, MOVE_DOWN_TOOLTIP)
+        self.move_up_button.clicked.connect(lambda _checked=False: self._on_move_clicked(-1))
+        self.move_down_button.clicked.connect(lambda _checked=False: self._on_move_clicked(1))
 
         self.name_edit.setText(name)
         self.name_edit.setToolTip(f"{type_name} entry - edit to rename")
         self.name_edit.editingFinished.connect(self._on_name_edited)
         self.select_box.toggled.connect(self.selectionToggled)
+        self.refresh_reset()
+        self.reset_box.toggled.connect(self._on_reset_toggled)
 
         widget = self.value_widget
         if type_name == "Double" and isinstance(widget, QDoubleSpinBox) and not isinstance(widget, FloatSpinBox):
@@ -1049,6 +1242,7 @@ class EntryRow(QWidget):
             replacement.setMinimumSize(widget.minimumSize())
             layout = widget.parentWidget().layout()
             layout.replaceWidget(widget, replacement)
+            widget.hide()  # until it is deleted
             widget.deleteLater()
             widget = self.value_widget = replacement
         if type_name == "Object":
@@ -1073,7 +1267,25 @@ class EntryRow(QWidget):
             container.addWidget(self.edit_button)
         self.refresh_value()
 
+    def _move_button(self, name: str, arrow: Qt.ArrowType, tooltip: str) -> QToolButton:
+        """The arrow button ``name`` of the ui file (created when the file has none)."""
+        button = self._ui.findChild(QToolButton, name)
+        if button is None:
+            button = QToolButton(self._ui)
+            button.setObjectName(name)
+            button.setArrowType(arrow)
+            self._ui.layout().addWidget(button)
+        if not button.toolTip():
+            button.setToolTip(tooltip)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # a click must not end the editing of a value
+        return button
+
     # ------------------------------------------------------------------ state
+    def set_move_enabled(self, up: bool, down: bool) -> None:
+        """Enable the arrows that can move the entry (not up from the top, not down from the bottom)."""
+        self.move_up_button.setEnabled(up)
+        self.move_down_button.setEnabled(down)
+
     def is_selected(self) -> bool:
         return self.select_box.isChecked()
 
@@ -1091,9 +1303,42 @@ class EntryRow(QWidget):
     def retire(self) -> None:
         """Detach the row from the view (it is about to be deleted)."""
         self._retired = True
-        for widget in (self.name_edit, self.value_widget, self.select_box):
-            if shiboken6.isValid(widget):
+        for widget in (
+            self.name_edit, self.value_widget, self.select_box, self.reset_box, self.move_up_button, self.move_down_button
+        ):
+            if widget is not None and shiboken6.isValid(widget):
                 widget.blockSignals(True)
+
+    def is_reset(self) -> bool:
+        """True while the Reset check box is checked."""
+        return self.reset_box.isChecked()
+
+    def refresh_reset(self) -> None:
+        """Show the store's Reset flag of the entry in the Reset check box."""
+        try:
+            reset = self._store.is_reset(self.name)
+        except KeyError:
+            return
+        box = self.reset_box
+        if box.isChecked() != reset:
+            blocked = box.blockSignals(True)
+            try:
+                box.setChecked(reset)
+            finally:
+                box.blockSignals(blocked)
+
+    def _on_move_clicked(self, offset: int) -> None:
+        if self._is_current():
+            self._view.move_entry(self.name, offset)
+
+    def _on_reset_toggled(self, checked: bool) -> None:
+        if not self._is_current():
+            return
+        try:
+            self._store.set_reset(self.name, checked)
+        except (KeyError, RuntimeError) as error:
+            log.warning("could not change the Reset flag of blackboard entry %r: %s", self.name, error)
+            self.refresh_reset()
 
     def _is_current(self) -> bool:
         return (
@@ -1248,6 +1493,7 @@ class BlackboardView(QWidget):
         store.entryRenamed.connect(self._on_entry_renamed)
         store.entryRetyped.connect(self._on_entry_retyped)
         store.entriesReordered.connect(self._on_entries_reordered)
+        store.entryResetChanged.connect(self._on_entry_reset_changed)
         for name in store.names():
             self._sync_row(name)
 
@@ -1279,6 +1525,19 @@ class BlackboardView(QWidget):
         finally:
             if shiboken6.isValid(dialog):
                 dialog.deleteLater()
+
+    def move_entry(self, name: str, offset: int) -> int:
+        """Move entry ``name`` ``offset`` places down the list (up when negative), as its arrows
+        do. Returns its new index (unchanged at either end of the list; -1 if it failed)."""
+        try:
+            before = self._store.names().index(name)
+            index = self._store.move(name, offset)
+        except (KeyError, ValueError, RuntimeError) as error:
+            log.warning("could not move blackboard entry %r: %s", name, error)
+            return -1
+        if index != before:
+            self.entryEdited.emit(name)
+        return index
 
     def remove_selected(self) -> None:
         """RemoveEntries button: remove every selected entry."""
@@ -1317,6 +1576,11 @@ class BlackboardView(QWidget):
     def _on_entry_retyped(self, name: str) -> None:
         self._sync_row(name)
 
+    def _on_entry_reset_changed(self, name: str) -> None:
+        row = self._rows.get(name)
+        if row is not None and shiboken6.isValid(row):
+            row.refresh_reset()
+
     def _on_entry_renamed(self, old: str, new: str) -> None:
         row = self._rows.get(old)
         if row is not None and new not in self._rows and self._store.has(new) and not self._store.has(old):
@@ -1330,11 +1594,17 @@ class BlackboardView(QWidget):
     def _on_entries_reordered(self) -> None:
         rows = self.rows()
         current = [self._rows_layout.itemAt(i).widget() for i in range(self._rows_layout.count())]
-        if [widget for widget in current if widget is not None] == rows:
-            return
+        if [widget for widget in current if widget is not None] != rows:
+            for index, row in enumerate(rows):
+                self._rows_layout.removeWidget(row)
+                self._rows_layout.insertWidget(index, row)
+        self._update_move_buttons()
+
+    def _update_move_buttons(self) -> None:
+        rows = self.rows()
         for index, row in enumerate(rows):
-            self._rows_layout.removeWidget(row)
-            self._rows_layout.insertWidget(index, row)
+            if shiboken6.isValid(row):
+                row.set_move_enabled(index > 0, index < len(rows) - 1)
 
     def _retire_row(self, name: str) -> EntryRow | None:
         row = self._rows.pop(name, None)
@@ -1357,6 +1627,7 @@ class BlackboardView(QWidget):
             if row is not None:
                 self._retire_row(name)
                 self._update_select_all()
+                self._update_move_buttons()
             return
         selected = False
         if row is not None and row.type_name != type_name:
