@@ -22,7 +22,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QToolButton
 
-import behavior_tree_widget.blackboard as blackboard_module
+import behavior_tree_widget.blackboard.view as blackboard_view  # EntryRow loads its ui files there
 from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status
 from behavior_tree_widget._ui import _read_ui
 from behavior_tree_widget.blackboard import ENTRY_TYPES, BlackboardStore
@@ -148,7 +148,7 @@ def click_arrow(qtbot, bt, name: str, direction: str) -> None:
 def strip_from_entry_ui(monkeypatch, folder, *child_names: str) -> None:
     """Make the entry ui files load without the widgets ``child_names`` (as a custom ui file
     would): copies of the files without them are written to ``folder`` and loaded instead."""
-    original = blackboard_module.load_ui
+    original = blackboard_view.load_ui
 
     def stripped_copy(name: str) -> str:
         root = ElementTree.fromstring(_read_ui(name))
@@ -166,7 +166,7 @@ def strip_from_entry_ui(monkeypatch, folder, *child_names: str) -> None:
             name = stripped_copy(str(name))
         return original(name, parent)
 
-    monkeypatch.setattr(blackboard_module, "load_ui", load)
+    monkeypatch.setattr(blackboard_view, "load_ui", load)
 
 
 def chain(bt, *types):
