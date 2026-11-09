@@ -325,10 +325,12 @@ class SubTreeBehaviour(py_trees.decorators.Decorator):
 class TickVisitor(py_trees.visitors.VisitorBase):
     """Follows every tick of the tree it is added to.
 
-    After a tick, :attr:`visited` lists the behaviours that ticked in it (in tick order) and
-    :attr:`running_before` holds those that were running when it started. At the INFO log level
-    it writes the execution of every node to the tree's log: a node that starts running,
-    finishes (Succeeded / Failed), executes within one tick, or is interrupted by its parent.
+    After a tick, :attr:`visited` holds the behaviours that ticked in it (in tick order, which is
+    the order the tree was built in), :attr:`running_before` those that were running when it
+    started, and :attr:`not_ticked` those of them that did not tick (interrupted by their
+    parent). At the INFO log level it writes the execution of every node to the tree's log: a
+    node that starts running, finishes (Succeeded / Failed), executes within one tick, or is
+    interrupted by its parent.
 
     Only the behaviours that ticked or were running are looked at, so the cost of a tick
     follows what ran in it, not the size of the tree.
@@ -340,61 +342,73 @@ class TickVisitor(py_trees.visitors.VisitorBase):
         super().__init__(full=False)
         self._executor_ref = weakref.ref(executor)
         self.labels = labels  # {behaviour: "'Title' (Type)"}, in the order the tree was built
-        self.order = {behaviour: index for index, behaviour in enumerate(labels)}
+        self._order: dict | None = None  # {behaviour: index in labels}, made when first needed
         self.running: set = set()  # behaviours running after the last tick
         self.running_before: set = set()  # behaviours running when the current / last tick started
-        self.visited: list = []  # behaviours that ticked in the current / last tick, in tick order
-        self.visited_set: set = set()
+        self.visited: dict = {}  # behaviours that ticked in the current / last tick (an ordered set)
+        self.not_ticked: list = []  # behaviours of running_before that did not tick, in build order
+        self._running_now: set = set()  # visited behaviours that reported RUNNING
         self._logging = False
 
     def initialise(self) -> None:
         # Statuses may have changed between ticks (Stop, Reset, a new loop): keep what still runs.
-        self.running_before = {behaviour for behaviour in self.running if behaviour.status == Status.RUNNING}
-        self.visited = []
-        self.visited_set = set()
+        running = self.running
+        self.running_before = {behaviour for behaviour in running if behaviour.status is Status.RUNNING}
+        self.visited = {}
+        self.not_ticked = []
+        self._running_now = set()
         executor = self._executor_ref()
         self._logging = executor is not None and executor.log_enabled(LogLevel.INFO)
 
     def run(self, behaviour: py_trees.behaviour.Behaviour) -> None:
-        if behaviour not in self.labels or behaviour in self.visited_set:
+        visited = self.visited
+        if behaviour in visited or behaviour not in self.labels:
             return
-        self.visited_set.add(behaviour)
-        self.visited.append(behaviour)
+        visited[behaviour] = None
+        after = behaviour.status
+        if after is Status.RUNNING:
+            self._running_now.add(behaviour)
         if not self._logging:
             return
-        after = behaviour.status
         result = self.RESULTS.get(after)
         if result is None:
             return
         if behaviour not in self.running_before:
-            what = "started: Running" if after == Status.RUNNING else f"executed: {result}"
-        elif after != Status.RUNNING:
+            what = "started: Running" if after is Status.RUNNING else f"executed: {result}"
+        elif after is not Status.RUNNING:
             what = f"finished: {result}"
         else:
             return  # still running
-        error = getattr(behaviour, "error", None) if after == Status.FAILURE else None
+        error = getattr(behaviour, "error", None) if after is Status.FAILURE else None
         if error:
             what += f" ({error})"
         self._write(f"Node {self.labels[behaviour]} {what}")
 
     def finalise(self) -> None:
+        visited = self.visited
+        not_ticked = [behaviour for behaviour in self.running_before if behaviour not in visited]
+        if len(not_ticked) > 1:
+            not_ticked = self.in_build_order(not_ticked)
+        self.not_ticked = not_ticked
         if self._logging:
-            for behaviour in self.in_build_order(self.running_before - self.visited_set):
-                if behaviour.status == Status.INVALID:
+            for behaviour in not_ticked:
+                if behaviour.status is Status.INVALID:
                     self._write(f"Node {self.labels[behaviour]} interrupted")
         self.running = {
-            behaviour
-            for behaviour in (*self.running_before, *self.visited)
-            if behaviour.status == Status.RUNNING
+            behaviour for behaviour in (*self._running_now, *not_ticked) if behaviour.status is Status.RUNNING
         }
 
     def changed(self) -> list:
         """The behaviours whose status may have changed in the last tick, in build order: those
         that ticked, and those that were running (an interrupted one is not ticked)."""
-        return self.in_build_order(self.visited_set | self.running_before)
+        if not self.not_ticked:
+            return list(self.visited)  # ticks visit the behaviours in the order they were built
+        return self.in_build_order([*self.visited, *self.not_ticked])
 
     def in_build_order(self, behaviours: Iterable) -> list:
-        order = self.order
+        order = self._order
+        if order is None:
+            order = self._order = {behaviour: index for index, behaviour in enumerate(self.labels)}
         return sorted(behaviours, key=lambda behaviour: order.get(behaviour, -1))
 
     def _write(self, message: str) -> None:

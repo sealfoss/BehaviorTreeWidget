@@ -85,10 +85,6 @@ __all__ = [
     "run_in_daemon_thread",
 ]
 
-# Earlier name of describe_error (kept for code that imported it).
-_describe = describe_error
-
-
 class ExecutionState(str, enum.Enum):
     IDLE = "Idle"
     RUNNING = "Running"
@@ -155,6 +151,9 @@ class _TickOutcome:
 #: Hidden sub-tree nodes whose widget was destroyed while their OnRun call still ran (kept, see
 #: TreeExecutor._on_subtree_call_done).
 _orphaned_nodes: list = []
+
+#: The state a node shows for the status of its behaviour (INVALID: see _refresh_statuses).
+_SHOWN_STATUS = {Status.RUNNING: NodeStatus.RUNNING, Status.SUCCESS: NodeStatus.SUCCEEDED, Status.FAILURE: NodeStatus.FAILED}
 
 
 class TreeExecutor(QObject):
@@ -791,27 +790,27 @@ class TreeExecutor(QObject):
         """
         twins, everything = self._shown_twins()
         visitor = self._visitor
-        if everything or visitor is None:
-            behaviours = list(self._nodes_of)
-        else:
-            behaviours = visitor.changed()
         nodes_of = self._nodes_of
+        behaviours = list(nodes_of) if everything or visitor is None else visitor.changed()
+        is_valid = shiboken6.isValid
         for behaviour in behaviours:
             node = nodes_of.get(behaviour)
-            if node is None or not shiboken6.isValid(node):
+            if node is None or not is_valid(node):
                 continue
             if node._canvas is None:
                 place = node.__dict__.get("_subtree_place")
                 node = twins.get((place[:-1], place[-1])) if place and twins else None
-                if node is None or not shiboken6.isValid(node):
+                if node is None or not is_valid(node):
                     continue  # removed from the view, or a hidden node whose sub-tree is not shown
-            if behaviour.status == Status.INVALID:
+            status = behaviour.status
+            if status is Status.INVALID:
                 if node.GetStatus() is NodeStatus.RUNNING:
                     self._apply_status(node, NodeStatus.READY)
                 continue
-            status = NodeStatus.from_py_trees(behaviour.status)
-            error = getattr(behaviour, "error", None) if status is NodeStatus.FAILED else None
-            self._apply_status(node, status, error)
+            shown = _SHOWN_STATUS[status]
+            error = getattr(behaviour, "error", None) if shown is NodeStatus.FAILED else None
+            if shown is not node.GetStatus() or error != node.GetError():
+                self._apply_status(node, shown, error)
 
     def _apply_status(self, node: NodeWidget, status: NodeStatus, error: str | None = None) -> None:
         previous_status, previous_error = node.GetStatus(), node.GetError()
