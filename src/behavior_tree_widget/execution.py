@@ -270,7 +270,6 @@ class TreeExecutor(QObject):
         label = self._labels.get(behaviour)
         return label if label is not None else repr(behaviour.name)
 
-    _label = label
 
     def report(self, level: LogLevel, message: str, exc_info: BaseException | None = None) -> None:
         """Write ``message`` to the library's logger (with the traceback of ``exc_info``) and to the
@@ -278,7 +277,6 @@ class TreeExecutor(QObject):
         log.log(PYTHON_LEVELS.get(level, logging.INFO), "%s", message, exc_info=exc_info)
         self.log_message(level, message)
 
-    _report = report
 
     def log_message(self, level: LogLevel, message: str) -> None:
         """Write ``message`` to the tree's log only (never raises)."""
@@ -287,7 +285,7 @@ class TreeExecutor(QObject):
         except RuntimeError:  # the widget is being destroyed
             pass
 
-    _log = log_message
+    _log = log_message  # the name the executor's own code uses
 
     def log_enabled(self, level: LogLevel) -> bool:
         """Whether a message of ``level`` would be written to the tree's log now."""
@@ -296,7 +294,6 @@ class TreeExecutor(QObject):
         except RuntimeError:
             return False
 
-    _log_enabled = log_enabled
 
     def start_call(self, function: Callable[[], Any], name: str) -> Future:
         """Run ``function()`` (an ``OnRun`` call) on a worker thread named ``name``."""
