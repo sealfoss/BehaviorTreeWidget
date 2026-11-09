@@ -295,6 +295,9 @@ class NodeWidget(QWidget):
         self._order_nodes: list[NodeWidget] | None = None
         self._order_keys: list[tuple[float, float]] = []
         self._order_basis: tuple[NodeWidget, ...] = ()
+        # Counts the changes that can change the order (links, moved children): an order worked out
+        # outside the lock (GetChildren on another thread) is kept only if none happened meanwhile.
+        self._order_version = 0
         self._status = NodeStatus.READY
         self._error: str | None = None
         self._run_token: RunToken | None = None  # of the current / last run
@@ -610,11 +613,12 @@ class NodeWidget(QWidget):
             basis = tuple(self._children)
             if self._order_nodes is not None and basis == self._order_basis:
                 return list(self._order_nodes)
+            version = self._order_version
         # Stable: children at exactly the same place keep the order in which they were connected.
         keyed = sorted(((child._order_key(), child) for child in basis), key=itemgetter(0))
         nodes = [child for _, child in keyed]
         with self._lock:
-            if tuple(self._children) == basis:
+            if self._order_version == version and tuple(self._children) == basis:
                 self._order_nodes, self._order_keys, self._order_basis = nodes, [key for key, _ in keyed], basis
         return list(nodes)
 
@@ -627,6 +631,7 @@ class NodeWidget(QWidget):
         the same place as a sibling: the full sort then keeps the order of the connections).
         """
         with self._lock:
+            self._order_version += 1
             nodes = self._order_nodes
             if nodes is None or tuple(self._children) != self._order_basis or child not in self._order_basis:
                 self._order_nodes = None
@@ -680,6 +685,7 @@ class NodeWidget(QWidget):
         with self._lock:
             self._children.append(child)
             self._order_nodes = None
+            self._order_version += 1
         with child._lock:
             child._parent = self
 
@@ -689,6 +695,7 @@ class NodeWidget(QWidget):
             if child in self._children:
                 self._children.remove(child)
                 self._order_nodes = None
+                self._order_version += 1
         with child._lock:
             if child._parent is self:
                 child._parent = None

@@ -158,7 +158,8 @@ records the measurements behind them.
 * **A tick refreshes what ticked.** The visitor that writes the execution log also records the
   behaviours a tick visited; only those, and the ones that were running before the tick, have
   their status shown again, so a tick costs what it runs, not what the tree holds.
-* **One tick waits at most `TICK_WAIT_BUDGET`** (0.1 s) for worker-thread calls in all, so a
+* **The waits of one tick share a budget**, `TICK_WAIT_BUDGET` (0.1 s): the first worker-thread
+  call a tick waits for gets its `THREAD_WAIT`, later ones only what is left of the budget. So a
   tick that starts many slow calls cannot keep the GUI waiting for the sum of their
   `THREAD_WAIT`s; calls that are not waited for finish on a later tick.
 * **The canvas repaints what changed** (`SmartViewportUpdate` instead of repainting the whole

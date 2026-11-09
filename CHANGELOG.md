@@ -57,10 +57,11 @@ with the log off): the time goes to py_trees and to the nodes themselves.
 
 ### Behaviour changes
 
-* One tick waits at most `TreeExecutor.TICK_WAIT_BUDGET` seconds (0.1) in all for worker-thread
-  `OnRun` calls it started. Once it has waited that long, calls started later in the same tick
-  are not waited for (their nodes show *Running* and finish on a later tick). Before, two slow
-  calls with a large `THREAD_WAIT` could hold one tick for the sum of their waits.
+* The waits of one tick for worker-thread `OnRun` calls share a budget,
+  `TreeExecutor.TICK_WAIT_BUDGET` (0.1 s). The first call a tick waits for still gets its whole
+  `THREAD_WAIT`; later calls get only what is left of the budget, and none once it is spent
+  (their nodes show *Running* and finish on a later tick). Before, two slow calls with a large
+  `THREAD_WAIT` could hold one tick for the sum of their waits.
 * Worker threads are named `behavior_tree_widget:<title>` only while they run a call; a thread
   idle for 60 seconds ends.
 * Messages written both to the logger `"behavior_tree_widget"` and to the tree's log now have the

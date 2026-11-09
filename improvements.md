@@ -148,7 +148,7 @@ show up only with hundreds of nodes but are cheap to fix.
 
 ### P7. A new thread per `OnRun` call and a GUI-thread wait per started leaf
 
-**Status: implemented in 0.9.0.** `WorkerPool` (`_workers.py`): daemon threads that are reused, a new one only when all are busy, idle ones end after 60 s, a stuck call holds one and never blocks exit. `run_in_daemon_thread` is unchanged (a test requires a new thread per call). The per-tick budget is the class attribute `TreeExecutor.TICK_WAIT_BUDGET = 0.1` s (a `TreeConfig` option was considered; a class attribute keeps tree files unchanged). 200 quick worker-thread leaves: 54.8 ms and 600 threads before, 37.2 ms and 1 thread after; the longest tick starting 10 leaves of 15 ms: 157 ms, 110 ms.
+**Status: implemented in 0.9.0.** `WorkerPool` (`_workers.py`): daemon threads that are reused, a new one only when all are busy, idle ones end after 60 s, a stuck call holds one and never blocks exit. `run_in_daemon_thread` is unchanged (a test requires a new thread per call). The per-tick budget is the class attribute `TreeExecutor.TICK_WAIT_BUDGET = 0.1` s (a `TreeConfig` option was considered; a class attribute keeps tree files unchanged). The first call a tick waits for gets its `THREAD_WAIT`, later ones at most what is left of the budget. 200 quick worker-thread leaves: 54.8 ms and 600 threads before, 37.2 ms and 1 thread after; the longest tick starting 10 leaves of 15 ms: 157 ms, 110 ms.
 
 * **Evidence**: a Sequence of 200 quick worker-thread leaves completes in one tick of 67 ms
   (~0.33 ms per leaf: thread start plus the `THREAD_WAIT` poll).

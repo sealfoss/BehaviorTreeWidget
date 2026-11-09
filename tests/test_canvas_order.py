@@ -46,6 +46,34 @@ def test_random_moves_keep_the_cached_order_exact(fan):
         assert badges(view, seq) == list(range(1, 10))
 
 
+def test_an_order_worked_out_while_a_child_moved_is_not_kept(fan):
+    """GetChildren() sorts outside the lock (it may run on a worker thread). If a child moves
+    meanwhile, that order is stale: it must not be cached, or GetChildren() would return it, and
+    the badges and the next execution would follow it, until another child of the parent changed."""
+    bt, seq, leaves = fan
+    first, last = leaves[0], leaves[-1]
+    seq._order_nodes = None  # nothing cached (as after a link change)
+    real_key = type(first)._order_key
+    dragged = []
+
+    def key_then_drag():
+        key = real_key(first)
+        if not dragged:  # the old place is read, then the user drags the child to the far right
+            dragged.append(key)
+            first._item.setPos(last._item.pos() + QPointF(400, 0))
+        return key
+
+    first._order_key = key_then_drag
+    try:
+        stale = seq.GetChildren()
+    finally:
+        del first._order_key
+    assert dragged and stale[0] is first  # worked out from the place it had before the drag
+    assert seq.GetChildren() == full_order(seq)
+    assert seq.GetChildren()[-1] is first
+    assert badges(bt.view(), seq) == list(range(1, 10))
+
+
 def test_children_at_the_same_place_keep_the_order_they_were_connected_in(fan):
     bt, seq, leaves = fan
     first, second = leaves[2], leaves[6]  # connected in this order

@@ -175,11 +175,13 @@ class TreeExecutor(QObject):
     * called while another command is being carried out (e.g. from ``OnTerminate``
       during Stop, or from a ``stateChanged`` slot), they are carried out after it.
 
-    Waiting for worker threads: a tick waits up to a leaf's ``THREAD_WAIT`` for an ``OnRun``
-    call it has just started on a worker thread, so quick calls finish within the tick. Once a
-    tick has spent :attr:`TICK_WAIT_BUDGET` seconds waiting for such calls, the calls started
-    later in that tick are not waited for: their nodes show Running and their results are
-    collected on a later tick. That bounds how long one tick can keep the GUI waiting.
+    Waiting for worker threads: a tick waits for an ``OnRun`` call it has just started on a
+    worker thread, so quick calls finish within the tick. The first call it waits for gets up to
+    its leaf's ``THREAD_WAIT``; later calls in the same tick share what is left of
+    :attr:`TICK_WAIT_BUDGET`, each at most its own ``THREAD_WAIT``. Once the budget is spent (at
+    once when it is 0), calls are not waited for: their nodes show Running and their results
+    are collected on a later tick. So one tick keeps the GUI waiting at most the larger of the
+    budget and the first call's ``THREAD_WAIT``.
 
     The executor uses the widget only through an :class:`~.execution_host.ExecutionHost`.
     """
@@ -222,6 +224,7 @@ class TreeExecutor(QObject):
         self._ticking = False
         self._aborting = False
         self._tick_waited = 0.0  # seconds the tick in progress spent waiting for worker-thread calls
+        self._tick_waits = 0  # worker-thread calls the tick in progress waited for
         self._queue = CommandQueue()
         self._shut_down = False
         self._blackboard_snapshot: list[tuple[str, str, Any]] | None = None  # see restore_blackboard
@@ -306,11 +309,16 @@ class TreeExecutor(QObject):
         return pool.submit(function, name)
 
     def wait_for_call(self, future: Future, wait: float) -> bool:
-        """Wait up to ``wait`` seconds (a leaf's ``THREAD_WAIT``) for a worker-thread call just
-        started in this tick. Returns False when it was not waited for: ``wait`` is 0, or the tick
-        already spent :attr:`TICK_WAIT_BUDGET` seconds waiting."""
-        if wait <= 0.0 or self._tick_waited >= self.TICK_WAIT_BUDGET:
+        """Wait for a worker-thread call just started in this tick: the first call the tick waits
+        for up to ``wait`` seconds (its leaf's ``THREAD_WAIT``), later ones up to what is left of
+        :attr:`TICK_WAIT_BUDGET` and at most ``wait``. Returns False when the call was not waited
+        for: ``wait`` is 0, or the budget is spent."""
+        left = self.TICK_WAIT_BUDGET - self._tick_waited
+        if wait <= 0.0 or left <= 0.0:
             return False
+        if self._tick_waits:
+            wait = min(wait, left)
+        self._tick_waits += 1
         started = time.perf_counter()
         try:
             wait_futures([future], timeout=wait)
@@ -702,6 +710,7 @@ class TreeExecutor(QObject):
         outcome = _TickOutcome()
         self._ticking = True
         self._tick_waited = 0.0
+        self._tick_waits = 0
         try:
             tree = self._tree
             assert tree is not None, "_tick ticks only a built tree"

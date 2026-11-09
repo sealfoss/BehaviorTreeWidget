@@ -1214,6 +1214,13 @@ class TreeView(QGraphicsView):
                 painter.drawLines(batch)
         painter.restore()
 
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        if not self.isEnabled():
+            # The hint (drawForeground) is fixed to the viewport, but a scroll moves the pixels
+            # already painted (SmartViewportUpdate) and repaints only the uncovered strip.
+            self.viewport().update()
+
     def drawForeground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         if self.isEnabled():
             return

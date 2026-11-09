@@ -200,6 +200,18 @@ def test_resizing_a_note_and_moving_a_group_leave_no_ghost(qtbot, scene):
     assert_no_stale_pixels(qtbot, view)
 
 
+def test_scrolling_without_a_tree_keeps_the_hint_in_place(qtbot, make_widget):
+    """With no tree loaded the view is disabled and shows a hint fixed to the viewport: a scroll
+    must repaint all of it, not move the pixels already painted."""
+    view = make_widget(size=(900, 700)).view()
+    assert not view.isEnabled()
+    settle(qtbot, 60)
+    center = view.mapToScene(view.viewport().rect().center())
+    view.centerOn(center.x() + 37, center.y() + 53)
+    assert view.mapToScene(view.viewport().rect().center()) != center, "the view did not scroll"
+    assert_no_stale_pixels(qtbot, view)
+
+
 def test_zooming_and_panning_repaint_everything(qtbot, scene):
     bt, view, seq, left, right = scene
     view.set_zoom(0.6)

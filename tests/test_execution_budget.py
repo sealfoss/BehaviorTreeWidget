@@ -77,11 +77,15 @@ def test_quick_calls_finish_within_the_tick_that_starts_them(tree):
 
 def test_calls_started_after_the_budget_is_spent_are_collected_on_a_later_tick(tree):
     slow, quick = leaves(tree, "Sleepy", "Instant")
+    # Well over the budget: the tick measures its wait from when it starts waiting, which can be
+    # a little after the call started when the machine is busy.
+    slow.SetField("seconds", 0.3)
     tree.Execute()
-    # The tick waited for the slow call (0.12 s, more than the budget), so it does not wait for the
-    # quick one it starts next: that one shows Running although it has long returned.
+    # The tick waited for the slow call (longer than the budget), so it does not wait for the
+    # quick one it starts next: that one shows Running although it returns at once.
     assert statuses([slow, quick]) == ["Succeeded", "Running"]
     assert tree.GetExecutionState() == "Running"
+    returned(quick)
     tick(tree)
     assert statuses([slow, quick]) == ["Succeeded", "Succeeded"]
     assert tree.GetExecutionState() == "Idle"
@@ -109,10 +113,31 @@ def test_the_budget_bounds_how_long_a_tick_keeps_the_gui_waiting(tree, monkeypat
         time.sleep(0.01)
         tick(tree)
     assert statuses(nodes) == ["Succeeded"] * 8
-    # Waiting all calls out would take 8 x 0.06 s in one tick; a tick stops waiting once it has
-    # waited TICK_WAIT_BUDGET (0.1 s), after at most one more call it is already waiting for.
-    assert max(durations) < 0.1 + 0.06 + 0.25, durations
+    # Waiting all calls out would take 8 x 0.06 s in one tick; after the first call a tick waits
+    # only for what is left of TICK_WAIT_BUDGET (0.1 s).
+    assert max(durations) < 0.1 + 0.25, durations
     assert len(durations) > 2
+
+
+def test_the_first_call_a_tick_waits_for_gets_its_whole_thread_wait(tree):
+    (slow,) = leaves(tree, "Sleepy")
+    slow.SetField("seconds", 0.3)  # three times the budget, well within its THREAD_WAIT (1 s)
+    tree.Execute()
+    assert statuses([slow]) == ["Succeeded"]
+    assert tree.executor().tick_count() == 1
+
+
+def test_later_calls_wait_only_for_what_is_left_of_the_budget(tree):
+    quick, slow = leaves(tree, "Instant", "Sleepy")
+    slow.SetField("seconds", 0.6)  # within its THREAD_WAIT (1 s), far beyond what the budget leaves
+    start = time.perf_counter()
+    tree.Execute()  # the first tick runs at once
+    elapsed = time.perf_counter() - start
+    assert statuses([quick, slow]) == ["Succeeded", "Running"]
+    assert elapsed < 0.45, f"the first tick kept the GUI waiting {elapsed:.3f} s"
+    returned(slow)
+    tick(tree)
+    assert statuses([quick, slow]) == ["Succeeded", "Succeeded"]
 
 
 def test_a_budget_of_zero_never_waits(tree):

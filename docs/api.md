@@ -128,6 +128,7 @@ calls `Shutdown()` if `Qt.WidgetAttribute.WA_DeleteOnClose` is set, and `Stop()`
   `snapshot()` / `restore(snapshot)`, `to_list()` / `load_list(items, replace=False)` /
   `parse_list(items)` (the entries in the form of the blackboard file), `is_capturing()` (an
   execution loop is recording loop-start values) and `client()` (its `py_trees.blackboard.Client`).
-* `TreeExecutor.TICK_WAIT_BUDGET` (seconds, default `0.1`) bounds how long one tick waits for
-  worker-thread `OnRun` calls (see `THREAD_WAIT` in [Writing leaf nodes](writing-nodes.md#class-attributes));
-  set it on the class, or on one widget's executor (`widget.executor().TICK_WAIT_BUDGET = 0.05`).
+* `TreeExecutor.TICK_WAIT_BUDGET` (seconds, default `0.1`) is how long one tick may wait for
+  worker-thread `OnRun` calls; only the first call it waits for may take longer, up to its
+  `THREAD_WAIT` (see [Writing leaf nodes](writing-nodes.md#class-attributes)). `0` turns the
+  waiting off. Set it on the class, or on one widget's executor (`widget.executor().TICK_WAIT_BUDGET = 0.05`).
