@@ -287,6 +287,16 @@ def bt(make_widget, tmp_path):
     return widget
 
 
+@pytest.fixture
+def widget(bt):
+    """``bt`` with the leaf node types of tests/support registered (each has a type name of its own)."""
+    from support import regression_node_types
+
+    for cls in regression_node_types():
+        bt.RegisterNodeType(cls)
+    return bt
+
+
 # ============================================================================ helpers
 def viewport_point(bt: BehaviorTreeWidget, node, widget=None) -> QPoint:
     """Viewport coordinates of the centre of ``widget`` (a child of ``node``) or of the node."""

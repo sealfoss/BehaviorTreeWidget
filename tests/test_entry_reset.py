@@ -16,7 +16,8 @@ from PySide6.QtWidgets import QApplication, QCheckBox
 from behavior_tree_widget import LeafNodeWidget, Status
 from behavior_tree_widget.blackboard import ENTRY_TYPES, BlackboardStore
 
-from conftest import assert_blackboard_in_file, fast_config, run_until_idle
+from conftest import assert_blackboard_in_file, fast_config, file_blackboard, run_until_idle
+from support.round10 import ShutdownFromOnRun, running
 
 
 class Bump(LeafNodeWidget):
@@ -487,3 +488,29 @@ def test_no_capture_is_left_behind(qtbot, tree):
     tree.Stop()
     QApplication.processEvents()
     assert not tree.blackboard_store().is_capturing()
+
+
+# ============================================================================ Reset entries and the blackboard file
+def test_reloading_the_running_tree_loads_the_reset_values(qtbot, bt):
+    running(qtbot, bt)
+    assert bt.LoadTree(bt.GetFilePath())
+    qtbot.wait(300)
+    assert bt.GetEntry("counter") == 0
+    assert file_blackboard(bt.GetFilePath())[0]["value"] == 0
+    assert bt.GetEntryReset("counter")
+
+def test_shutdown_during_a_loop_writes_the_reset_values(qtbot, bt):
+    running(qtbot, bt)
+    path = bt.GetFilePath()
+    bt.Shutdown()
+    assert file_blackboard(path)[0]["value"] == 0
+
+def test_shutdown_during_a_tick_writes_the_reset_values(qtbot, bt):
+    bt.RegisterNodeType(ShutdownFromOnRun)
+    fast_config(bt)
+    bt.AddEntry("counter", "Integer", 1, reset=True)
+    bt.Connect(bt.GetRootNode(), bt.AddNode("ShutdownFromOnRun", 0, 200))
+    path = bt.GetFilePath()
+    bt.Execute()
+    qtbot.waitUntil(lambda: bt.blackboard_store().is_disposed(), timeout=3000)
+    assert file_blackboard(path)[0]["value"] == 1

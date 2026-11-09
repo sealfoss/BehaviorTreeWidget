@@ -50,9 +50,22 @@ from behavior_tree_widget.blackboard import (
     container_items,
     infer_type,
     parse_container_text,
+    safe_repr,
 )
 
 from conftest import assert_blackboard_in_file, fast_config, run_until_idle
+from support.round3 import (
+    LOGGER,
+    node_entry,
+    read_json,
+    record,
+    rows_in_layout,
+    warning_texts,
+    warnings_logged,
+    write_tree,
+)
+from support.round4 import BrokenRepr
+from support.round5 import BrokenRepr as R5BrokenRepr
 
 USER_TYPES = ["Integer", "Double", "String", "Bool", "List", "Dictionary", "Set"]
 ALL_TYPES = USER_TYPES + ["Object"]
@@ -1745,3 +1758,153 @@ def test_selection_changes_do_not_mark_tree_modified(bt, view, tmp_path):
     view.select_all.click()
     view.row("a").select_box.click()
     assert not bt.IsModified()
+
+
+# ============================================================================ Object entries / names / order
+def test_object_entries_are_never_saved_and_cause_no_warning(qtbot, bt, dialogs, tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    bt.AddEntry("n", "Integer", 1)
+    marker = object()
+    bt.SetEntry(marker, "obj")
+    bt.SetEntry(2**40, "big")  # too large for an Integer entry: stored as Object
+    bt.AddEntry("explicit", "Object", [1, 2])  # encodable, but still a run-time Object entry
+    assert [bt.GetEntryType(name) for name in ("obj", "big", "explicit")] == ["Object"] * 3
+    path = tmp_path / "saved.json"
+    dialogs.save_path = str(path)
+    caplog.clear()
+    bt.button("Save").click()
+    assert dialogs.kinds() == ["save_dialog"], "saving Object entries must not show a warning"
+    assert read_json(tmp_path / "saved_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert "blackboard" not in read_json(tmp_path / "saved_BT.json")
+    assert warnings_logged(caplog) == []
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG and r.name.startswith(LOGGER)]
+    assert any("'obj'" in message for message in debug), "skipping an Object entry is logged at debug level"
+    assert bt.SaveTree(str(tmp_path / "programmatic.json"))
+    assert read_json(tmp_path / "programmatic_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert warnings_logged(caplog) == []
+    assert not bt.IsModified()
+    # kept by New / Load, with their run-time values
+    assert bt.NewTree(str(tmp_path / "fresh.json"))
+    assert bt.GetEntryNames() == ["obj", "big", "explicit"]
+    assert bt.GetEntry("obj") is marker
+    assert bt.LoadTree(str(path))
+    assert bt.GetEntryNames() == ["n", "obj", "big", "explicit"]
+    assert bt.GetEntry("obj") is marker
+
+def test_invalid_entry_names_in_files_are_skipped(qtbot, make_widget, dialogs, tmp_path, caplog):
+    invalid = ["", "   ", " lead", "trail ", "a.b", "a/b", 5, None]
+    items = [{"name": name, "type": "Integer", "value": index} for index, name in enumerate(invalid)]
+    items += [{"name": "good", "type": "Integer", "value": 1}, {"name": "also good", "type": "String", "value": "x"}]
+    items.append({"type": "Integer", "value": 3})  # no name at all
+    path = write_tree(tmp_path / "names.json", [node_entry("r", "Root")], blackboard=items)
+    entries, problems = BlackboardStore.parse_list(items)
+    assert [name for name, _, _ in entries] == ["good", "also good"]
+    assert len(problems) == len(invalid) + 1
+    widget = make_widget()
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert widget.LoadTree(path), "invalid entry names must never fail a load"
+    assert widget.GetEntryNames() == ["good", "also good"]
+    assert len([m for m in warnings_logged(caplog) if "blackboard entry" in m]) == len(invalid) + 1
+    other = make_widget()
+    dialogs.open_path = path
+    other.button("Load").click()
+    texts = warning_texts(dialogs)
+    assert len(texts) == 1 and texts[0].count("- blackboard entry") == len(invalid) + 1
+    assert other.GetEntryNames() == ["good", "also good"]
+
+@pytest.mark.parametrize(
+    "name,valid",
+    [("x", True), ("with space", True), ("ünï", True), ("", False), ("  ", False), (" x", False),
+     ("x ", False), ("a.b", False), ("a/b", False), (5, False), (None, False)],
+)
+def test_check_name_format(name, valid):
+    if valid:
+        assert BlackboardStore.check_name_format(name) == name
+    else:
+        with pytest.raises((ValueError, TypeError)):
+            BlackboardStore.check_name_format(name)
+
+def test_load_order_follows_the_file(qtbot, bt, tmp_path):
+    marker = object()
+    bt.AddEntry("c", "Integer", 1)
+    bt.SetEntry(marker, "obj")
+    bt.AddEntry("a", "String", "old")
+    bt.AddEntry("zz", "Integer", 9)
+    path = write_tree(
+        tmp_path / "order.json",
+        [node_entry("r", "Root")],
+        blackboard=[
+            {"name": "b", "type": "Integer", "value": 2},
+            {"name": "a", "type": "Integer", "value": 1},
+            {"name": "c", "type": "String", "value": "three"},
+        ],
+    )
+    assert bt.LoadTree(path)
+    assert bt.GetEntryNames() == ["b", "a", "c", "obj"]
+    assert bt.blackboard_store().items()[:3] == [("b", "Integer", 2), ("a", "Integer", 1), ("c", "String", "three")]
+    qtbot.wait(20)
+    assert rows_in_layout(bt.blackboard_view()) == ["b", "a", "c", "obj"]
+    assert [row.name for row in bt.blackboard_view().rows()] == ["b", "a", "c", "obj"]
+
+def test_store_reorder_and_dispose_notify(qapp):
+    store = BlackboardStore()
+    reordered = record(store.entriesReordered)
+    for name in ("a", "b", "c"):
+        store.add(name, "Integer", 1)
+    store.reorder(["c", "missing", "a"])
+    assert store.names() == ["c", "a", "b"]
+    assert len(reordered) == 1
+    store.reorder(["c", "a"])
+    assert len(reordered) == 1, "no signal when the order does not change"
+    removed = record(store.entryRemoved)
+    store.dispose(notify=False)
+    assert removed == [] and store.is_disposed()
+    with pytest.raises(RuntimeError):
+        store.add("d", "Integer", 1)
+    with pytest.raises(RuntimeError):
+        store.set("a", 2)
+
+    other = BlackboardStore()
+    for name in ("x", "y"):
+        other.add(name, "String", name)
+    removed = record(other.entryRemoved)
+    other.dispose(notify=True)
+    assert removed == ["x", "y"]
+    other.dispose(notify=True)
+    assert removed == ["x", "y"], "dispose is idempotent"
+    store.deleteLater()
+    other.deleteLater()
+
+
+# ============================================================================ data edge cases
+def test_object_entry_with_broken_repr_still_gets_a_row(widget):
+    widget.SetEntry(BrokenRepr(), "broken")
+    row = widget.blackboard_view().row("broken")
+    assert row is not None
+    assert "BrokenRepr" in row.value_widget.text()
+
+
+# ============================================================================ display robustness
+def test_containers_with_broken_repr_still_get_rows(widget):
+    widget.SetEntry([R5BrokenRepr()], "items")
+    widget.SetEntry({"k": R5BrokenRepr()}, "mapping")
+    for name in ("items", "mapping"):
+        assert widget.blackboard_view().row(name) is not None
+
+def test_set_with_broken_repr_is_skipped_when_saving(widget, tmp_path):
+    widget.SetEntry({R5BrokenRepr()}, "bad_set")
+    widget.SetEntry(1, "good")
+    path = str(tmp_path / "s.json")
+    assert widget.SaveTree(path)
+    names = [entry["name"] for entry in json.load(open(tmp_path / "s_BB.json", encoding="utf-8"))["blackboard"]]
+    assert names == ["good"]
+
+def test_container_tooltips_are_exact_for_small_values(widget):
+    widget.SetEntry(list(range(8)), "eight")
+    widget.SetEntry({"z": 1, "a": 2}, "ordered")
+    assert widget.blackboard_view().row("eight").value_widget.toolTip() == repr(list(range(8)))
+    assert widget.blackboard_view().row("ordered").value_widget.toolTip() == "{'z': 1, 'a': 2}"
+
+def test_safe_repr_of_large_bytes_is_cheap_and_short():
+    text = safe_repr(b"x" * 10_000_000)
+    assert len(text) <= 500 and "10000000 bytes" in text

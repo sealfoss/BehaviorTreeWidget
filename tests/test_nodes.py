@@ -53,8 +53,8 @@ from behavior_tree_widget import (
     RootNodeWidget,
     Status,
     UnknownLeafNodeWidget,
+    nodes as nodes_module,
 )
-from behavior_tree_widget import nodes as nodes_module
 from behavior_tree_widget.nodes import (
     CHILDREN,
     CONNECTION_COLORS,
@@ -79,6 +79,7 @@ from conftest import (
     run_until_idle,
     viewport_point,
 )
+from support.round8 import Chooser, build
 
 MAIN_THREAD = threading.get_ident()
 
@@ -1577,3 +1578,44 @@ def test_wheel_guard_filter_directly(qtbot):
     assert not spin.hasFocus()
     assert guard.eventFilter(spin, event) is True
     assert not event.isAccepted()
+
+
+# ============================================================================ UX details
+def test_field_editor_shows_the_start_of_long_text_after_set_field(widget):
+    class Texty(LeafNodeWidget):
+        TYPE_NAME = "R5Texty"
+        _fields = {"text": "short"}
+        RUN_IN_THREAD = False
+
+        def OnRun(self, tree):
+            return True
+
+    node = widget.AddNode(Texty, 0, 200)
+    node.SetField("text", "START " + "x" * 200)
+    assert node.field_editor("text").cursorPosition() == 0
+
+
+# ============================================================================ list fields
+def test_a_list_field_item_that_cannot_be_converted_to_text(widget):
+    (node,) = build(widget, Chooser)
+    node.SetField("choices", [10**5000, 7])
+    combo = node._editors["choices"]
+    assert isinstance(combo, QComboBox)
+    assert [combo.itemText(i) for i in range(combo.count())] == ["<int object>", "7"]
+    node.SetField("b", 2.5)  # another kind: the editors are rebuilt
+    node.SetField("a", 5)
+    node.SetField("choices", ["x", "y"])
+    assert node.GetField("a") == 5 and node.GetField("b") == 2.5 and node.GetField("choices") == ["x", "y"]
+
+def test_a_node_class_with_such_a_default_can_be_created(widget):
+    class HugeChoices(LeafNodeWidget):
+        TYPE_NAME = "R8HugeChoices"
+        RUN_IN_THREAD = False
+        _fields = {"choices": [10**5000, 1]}
+
+        def OnRun(self, tree):
+            return True
+
+    widget.RegisterNodeType(HugeChoices)
+    node = widget.AddNode(HugeChoices, 0, 200)
+    assert node.GetFieldSelection("choices") == 10**5000

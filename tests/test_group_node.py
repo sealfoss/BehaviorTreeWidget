@@ -592,3 +592,12 @@ def test_an_application_type_named_group_takes_the_name(make_widget, tmp_path):
     placeholder = next(node for node in plain.GetNodes() if node.GetTypeName() == GROUP)
     assert not isinstance(placeholder, GroupNodeWidget)  # its data is not read as a built-in group
     assert placeholder.GetField("members") == 5
+
+
+# ============================================================================ Promote to Sub-Tree
+def test_a_pasted_default_named_group_always_gets_the_next_number(bt):
+    group = bt.AddNode("Group", 0, 600)
+    assert bt.CopyNodes([group])
+    bt.RemoveNode(group)
+    pasted = bt.PasteNodes()
+    assert [node.GetTitle() for node in pasted if isinstance(node, GroupNodeWidget)] == ["group_002"]

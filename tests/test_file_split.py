@@ -21,9 +21,11 @@ from behavior_tree_widget.serialization import (
     is_blackboard_file_name,
     read_blackboard_file,
     tree_name,
+    write_json_files_atomic,
 )
 
 from conftest import assert_blackboard_in_file, fast_config, run_until_idle
+from support.round10 import legacy_tree as r10_legacy_tree
 
 
 def read(path) -> dict:
@@ -413,3 +415,76 @@ def test_loading_a_tree_runs_with_the_loaded_blackboard(qtbot, make_widget, bt, 
     other.Execute()
     run_until_idle(qtbot, other)
     assert results == ["Succeeded"]
+
+
+# ============================================================================ writing both files
+def test_write_json_files_atomic_puts_back_what_it_wrote(tmp_path):
+    first, second = tmp_path / "a.json", tmp_path / "b.json"
+    first.write_text('{"old": 1}', encoding="utf-8")
+    os.makedirs(second)  # cannot be written
+    with pytest.raises(OSError):
+        write_json_files_atomic([(str(first), {"new": 1}), (str(second), {"new": 2})])
+    assert first.read_text(encoding="utf-8") == '{"old": 1}'
+    fresh = tmp_path / "fresh.json"
+    with pytest.raises(OSError):
+        write_json_files_atomic([(str(fresh), {"new": 1}), (str(second), {"new": 2})])
+    assert not fresh.exists()
+    assert sorted(os.listdir(tmp_path)) == ["a.json", "b.json"]  # no temporary files left
+
+def test_a_failed_new_tree_keeps_the_tree_file(bt, tmp_path):
+    bt.AddNode("Succeed", 0, 200)
+    assert bt.SaveTree(bt.GetFilePath())
+    before = read(bt.GetFilePath())
+    os.chmod(bt.GetBlackboardFilePath(), stat.S_IREAD)
+    try:
+        with pytest.raises(OSError):
+            bt.NewTree(str(tmp_path / "tree.json"))
+    finally:
+        os.chmod(bt.GetBlackboardFilePath(), stat.S_IREAD | stat.S_IWRITE)
+    assert read(bt.GetFilePath()) == before
+    assert len(bt.GetNodes()) == 2 and not bt.IsModified()
+
+def test_a_failed_new_tree_from_the_button_keeps_the_tree_file(bt, tmp_path, dialogs):
+    bt.AddNode("Succeed", 0, 200)
+    assert bt.SaveTree(bt.GetFilePath())
+    before = read(bt.GetFilePath())
+    os.remove(bt.GetBlackboardFilePath())
+    os.makedirs(bt.GetBlackboardFilePath())
+    dialogs.save_path = str(tmp_path / "tree_BT.json")
+    assert not bt.NewTree()
+    assert "critical" in dialogs.kinds()
+    assert read(bt.GetFilePath()) == before
+
+
+# ============================================================================ names of files of earlier versions
+@pytest.mark.parametrize("answer, replaced", [(QMessageBox.StandardButton.Yes, True), (QMessageBox.StandardButton.No, False)])
+def test_the_close_prompt_asks_before_replacing_a_newer_tree_file(
+    make_widget, tmp_path, dialogs, monkeypatch, answer, replaced
+):
+    r10_legacy_tree(tmp_path / "robot.json")
+    newer = {"format": FORMAT_NAME, "version": 1, "nodes": [], "connections": [], "comment": "newer"}
+    (tmp_path / "robot_BT.json").write_text(json.dumps(newer), encoding="utf-8")
+    widget = make_widget()
+    assert widget.LoadTree(str(tmp_path / "robot.json"))
+    widget.AddNode("Succeed", 0, 200)
+    answers = iter([QMessageBox.StandardButton.Save, answer])
+    original_question = QMessageBox.question
+
+    def question(*args, **kwargs):
+        dialogs.question_answer = next(answers, QMessageBox.StandardButton.Discard)
+        return original_question(*args, **kwargs)
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    dialogs.save_path = ""  # "No" offers the save dialog; cancelling it keeps the window open
+    assert widget.ConfirmDiscardChanges() == replaced
+    assert [kind for kind in dialogs.kinds() if kind == "question"] == ["question", "question"]
+    assert (read(tmp_path / "robot_BT.json").get("comment") != "newer") == replaced
+    assert ("save_dialog" in dialogs.kinds()) == (not replaced)
+
+def test_the_save_dialog_asks_when_a_tree_name_is_typed_without_extension(bt, tmp_path, dialogs):
+    (tmp_path / "robot_BT.json").write_text("{}", encoding="utf-8")
+    dialogs.save_path = str(tmp_path / "robot_BT")  # the dialog only confirmed "robot_BT"
+    dialogs.question_answer = QMessageBox.StandardButton.No
+    assert not bt.SaveTree()
+    assert "question" in dialogs.kinds()
+    assert (tmp_path / "robot_BT.json").read_text(encoding="utf-8") == "{}"
