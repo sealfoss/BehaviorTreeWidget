@@ -637,7 +637,7 @@ class TreeExecutor(QObject):
             if call is None or call.done():
                 node.deleteLater()
                 continue
-            place = node.__dict__.get("_subtree_place")
+            place = node._subtree_place
             if place is not None:
                 self._subtree_calls[place] = call
             call.add_done_callback(functools.partial(self._on_subtree_call_done, node))
@@ -795,7 +795,7 @@ class TreeExecutor(QObject):
             if node is None or not is_valid(node):
                 continue
             if node._canvas is None:
-                place = node.__dict__.get("_subtree_place")
+                place = node._subtree_place
                 node = twins.get((place[:-1], place[-1])) if place and twins else None
                 if node is None or not is_valid(node):
                     continue  # removed from the view, or a hidden node whose sub-tree is not shown

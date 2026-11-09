@@ -40,7 +40,7 @@ from .canvas import TreeView, clamp_to_scene
 from .clipboard import CLIPBOARD_FORMAT, CLIPBOARD_MIME_TYPE, copy_nodes, paste_nodes
 from .config import ConfigureDialog, TreeConfig
 from .document import TreeDocument
-from .execution import ExecutionState, LeafBehaviour, TreeExecutor
+from .execution import ExecutionState, TreeExecutor
 from .groups import GROUP, GroupNodeWidget, default_group_name, default_group_number
 from .nodes import LeafNodeWidget, NodeWidget, RootNodeWidget, UnknownLeafNodeWidget
 from .notes import NOTES, NotesNodeWidget
@@ -108,11 +108,7 @@ SYMBOL_FONTS = ["Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols2", "Noto Sa
 def _cleanup_after_destroy(store: BlackboardStore, executor: TreeExecutor, log_closer) -> None:
     """Release resources of a BehaviorTreeWidget destroyed without Shutdown()."""
     close_log_file(log_closer)  # the log file is closed once what was logged is written
-    executor._shut_down = True
-    executor._aborting = True  # a tick in progress runs no more node code
-    for behaviour in list(getattr(executor, "_behaviours", {}).values()):
-        if isinstance(behaviour, LeafBehaviour):
-            behaviour.cancel()
+    executor.abandon()  # no more node code runs; running OnRun calls are cancelled
     try:
         store.dispose(notify=False)  # the Blackboard tab is being destroyed as well
     except Exception:  # noqa: BLE001
@@ -1452,6 +1448,7 @@ class BehaviorTreeWidget(QTabWidget):
         view.set_locked(self._executor.state() is not ExecutionState.IDLE)
         previous = self._view
         self._levels.push(level)
+        self._executor.invalidate_shown_twins()
         self._frame_layout.addWidget(view)
         previous.hide()
         view.show()
@@ -1508,6 +1505,7 @@ class BehaviorTreeWidget(QTabWidget):
     def _close_level(self, level: ZoomLevel) -> None:
         """Stop showing ``level`` (the top one) and show the tree below it; its changes are dropped."""
         self._levels.remove(level)
+        self._executor.invalidate_shown_twins()
         view = level.view
         self._frame_layout.removeWidget(view)
         view.hide()

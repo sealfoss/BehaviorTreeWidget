@@ -139,7 +139,7 @@ class TreeBuilder:
             if isinstance(inner, SubTreeNodeWidget):
                 inner._base_dir = folder  # their file names are relative to this sub-tree's file
             place = (*inner_scope, inner.GetId())
-            inner.__dict__["_subtree_place"] = place
+            inner._subtree_place = place
             call = self._subtree_calls.get(place)
             if call is not None and not call.done():
                 inner._worker_future = call  # an interrupted call of the previous run: wait for it
