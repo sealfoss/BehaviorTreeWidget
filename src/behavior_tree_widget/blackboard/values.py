@@ -70,7 +70,7 @@ TYPE_ALIASES = {
 INVALID_NAME_CHARACTERS = "./"
 
 
-def canonical_type(type_name: str) -> str:
+def canonical_type(type_name: object) -> str:
     """Return the canonical entry type name for ``type_name`` (case-insensitive, aliases allowed)."""
     if type_name in ENTRY_TYPES:
         return type_name

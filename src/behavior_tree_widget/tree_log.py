@@ -41,7 +41,7 @@ import logging.handlers
 import os
 import queue
 import threading
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QMetaMethod, QObject, Qt, Signal
 
@@ -204,7 +204,7 @@ class _LogFile:
         action = getattr(record, "bt_action", None)
         if action == "switch":
             self._close_handler()
-            self._path = record.bt_path
+            self._path = cast(Any, record).bt_path  # set by set_file (logging.makeLogRecord)
             if self._buffer:
                 self._open()  # the messages kept so far go to this file at once
         elif action == "close":
@@ -214,8 +214,9 @@ class _LogFile:
             self._closed = True
             self._buffer.clear()
         elif not self._closed:
-            if self._open():
-                self._handler.handle(record)
+            handler = self._open()
+            if handler is not None:
+                handler.handle(record)
                 _unflushed.add(self)
             else:
                 self._buffer.append(record)
@@ -224,13 +225,14 @@ class _LogFile:
         if self._handler is not None:
             self._handler.flush()
 
-    def _open(self) -> bool:
-        """Open the chosen file (when the first record for it comes) and write the kept records."""
+    def _open(self) -> logging.FileHandler | None:
+        """Open the chosen file (when the first record for it comes) and write the kept records.
+        Returns the handler writing the file, or None when there is no file to write to."""
         if self._handler is not None:
-            return True
+            return self._handler
         path = self._path
         if path is None or path in self._failed:
-            return False
+            return None
         try:
             folder = os.path.dirname(path)
             if folder:
@@ -239,12 +241,12 @@ class _LogFile:
         except OSError as error:
             self._failed.add(path)  # reported once
             _log.warning("the log file '%s' cannot be written: %s", path, error)
-            return False
+            return None
         handler.setFormatter(self._formatter)
         self._handler = handler
         while self._buffer:
             handler.handle(self._buffer.popleft())
-        return True
+        return handler
 
     def _close_handler(self) -> None:
         handler, self._handler = self._handler, None
@@ -258,7 +260,7 @@ class _UnflushedFileHandler(logging.FileHandler):
 
     def emit(self, record: logging.LogRecord) -> None:
         if self.stream is None:
-            if self.mode != "w" or not self._closed:
+            if self.mode != "w" or not self._closed:  # type: ignore[attr-defined]  # set by FileHandler; not in typeshed
                 self.stream = self._open()
             if self.stream is None:
                 return
@@ -311,7 +313,8 @@ class TreeLogger(QObject):
         """``emitter``: the object whose signals of the same names announce the messages (for
         example the BehaviorTreeWidget); by default the logger's own."""
         super().__init__(parent)
-        self._emitter = emitter if emitter is not None else self
+        # Any object with the signals errorLogged ... messageLogged (looked up by name).
+        self._emitter: Any = emitter if emitter is not None else self
         self._level = LogLevel.INFO
         self._lock = threading.Lock()
         self._pending: collections.deque = collections.deque()  # (level, message) not signalled yet
@@ -353,7 +356,7 @@ class TreeLogger(QObject):
                 message = f"<{type(message).__name__} object>"
         # makeRecord + handle: Logger.log would also look up the calling code, which costs more
         # than everything else here and is not written.
-        record = self._logger.makeRecord(self._logger.name, PYTHON_LEVELS[level], "", 0, message, None, None)
+        record = self._logger.makeRecord(self._logger.name, PYTHON_LEVELS[level], "", 0, message, (), None)
         record.bt_level = int(level)
         self._logger.handle(record)
         with self._lock:

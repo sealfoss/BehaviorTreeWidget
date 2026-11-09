@@ -75,16 +75,17 @@ def nearest_free_offset(rects: Iterable[QRectF], obstacles: Iterable[QRectF], ga
             for x1, y1, x2, y2 in regions
             if (x1 < value < x2 if vertical else y1 < value < y2)
         )
-        low = high = None  # the merged span containing 0, if any
+        span: tuple[float, float] | None = None  # (low, high) of the merged span containing 0, if any
         for start, end in spans:
-            if high is not None and start < high:
-                high = max(high, end)
+            if span is not None and start < span[1]:
+                span = (span[0], max(span[1], end))
                 continue
-            if high is not None and low < 0.0 < high:
+            if span is not None and span[0] < 0.0 < span[1]:
                 break  # the span containing 0 is complete
-            low, high = start, end
-        if low is None or not low < 0.0 < high:
+            span = (start, end)
+        if span is None or not span[0] < 0.0 < span[1]:
             return 0.0
+        low, high = span
         return high if high <= -low else low
 
     best: tuple | None = None
@@ -98,6 +99,7 @@ def nearest_free_offset(rects: Iterable[QRectF], obstacles: Iterable[QRectF], ga
     # The two axes give a first, usually close, candidate; only regions nearer than it matter.
     consider(nearest_on_line(blocked, 0.0, vertical=False), 0.0)
     consider(0.0, nearest_on_line(blocked, 0.0, vertical=True))
+    assert best is not None, "consider() keeps the first candidate"
     limit = best[0][0] + 1e-6
     near = [
         region

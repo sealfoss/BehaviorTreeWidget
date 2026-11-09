@@ -32,11 +32,15 @@ class ZoomLevel:
 
     @property
     def view(self) -> TreeView:
-        return self.document.view
+        view = self.document.view
+        assert view is not None, "a zoom level is shown in a view"
+        return view
 
     @property
     def path(self) -> str:
-        return self.document.path
+        path = self.document.path
+        assert path is not None, "a zoom level shows a tree file"
+        return path
 
 
 class ZoomStack:

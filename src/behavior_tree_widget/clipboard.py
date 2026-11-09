@@ -116,7 +116,7 @@ def clipboard_data() -> dict | None:
     if mime is None or not mime.hasFormat(CLIPBOARD_MIME_TYPE):
         return None
     try:
-        data = json.loads(bytes(mime.data(CLIPBOARD_MIME_TYPE)).decode("utf-8"))
+        data = json.loads(bytes(mime.data(CLIPBOARD_MIME_TYPE).data()).decode("utf-8"))
     except (ValueError, RecursionError) as error:  # also UnicodeDecodeError
         log.warning("the clipboard holds damaged node data: %s", error)
         return None
@@ -183,9 +183,12 @@ def paste_nodes(view: TreeView, registry: NodeTypeRegistry, next_group_name: Cal
             if shiboken6.isValid(node):
                 node.deleteLater()
         raise
-    offset = nearest_free_offset([node.scene_rect() for node in pasted], obstacles)
+    rects = [rect for rect in (node.scene_rect() for node in pasted) if rect is not None]
+    offset = nearest_free_offset(rects, obstacles)
     for node in pasted:
-        node._item.setPos(clamp_to_scene(node._item.pos() + offset)[0])
+        item = node._item
+        assert item is not None, "pasted nodes are in the view"
+        item.setPos(clamp_to_scene(item.pos() + offset)[0])
     by_id = {node.GetId(): node for node in pasted}
     for parent_id, child_id in plan.connections:
         view.connect_nodes(by_id[parent_id], by_id[child_id])

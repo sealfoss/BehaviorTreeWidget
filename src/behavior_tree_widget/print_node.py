@@ -194,7 +194,8 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
 
     # ------------------------------------------------------------------ user edits
     def _on_level_chosen(self, index: int) -> None:
-        level = self._level_box.itemData(index) if index >= 0 else None
+        box = self._level_box
+        level = box.itemData(index) if box is not None and index >= 0 else None
         if not isinstance(level, int):
             return
         with self._lock:
@@ -203,9 +204,10 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
         self._on_editor_value(self.LEVEL_FIELD, level)
 
     def _on_source_chosen(self, index: int) -> None:
-        if index < 0:
+        box = self._source_box
+        if index < 0 or box is None:
             return
-        data = self._source_box.itemData(index)
+        data = box.itemData(index)
         source = data if isinstance(data, str) and data else None
         with self._lock:
             if self._fields.get(self.SOURCE_FIELD) == source:

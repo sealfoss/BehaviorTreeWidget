@@ -17,7 +17,7 @@ import os
 import threading
 import warnings
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QPointF, QSignalBlocker, Qt, QTimer, Signal
@@ -186,7 +186,7 @@ class BehaviorTreeWidget(QTabWidget):
 
         # ---- "Behavior Tree" tab (BehaviorTreeView.ui)
         self._tree_page = load_ui("BehaviorTreeView.ui")
-        frame_view: QFrame = self._tree_page.findChild(QFrame, "FrameView")
+        frame_view = cast(QFrame, self._tree_page.findChild(QFrame, "FrameView"))  # in the packaged .ui
         frame_layout = QVBoxLayout(frame_view)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         self._frame_view = frame_view
@@ -207,9 +207,10 @@ class BehaviorTreeWidget(QTabWidget):
                 font = QFont(button.font())
                 font.setFamilies(SYMBOL_FONTS + font.families())
                 button.setFont(font)
-        self._loop_box: QCheckBox = self._tree_page.findChild(QCheckBox, LOOP_CHECKBOX_NAME)
-        if self._loop_box is None:
+        loop_box = self._tree_page.findChild(QCheckBox, LOOP_CHECKBOX_NAME)
+        if loop_box is None:
             raise RuntimeError(f"BehaviorTreeView.ui has no QCheckBox named {LOOP_CHECKBOX_NAME!r}")
+        self._loop_box: QCheckBox = loop_box
         self.addTab(self._tree_page, self.TREE_TAB_TITLE)
 
         # ---- "Blackboard" tab (BlackBoardView.ui)
@@ -696,7 +697,7 @@ class BehaviorTreeWidget(QTabWidget):
         """
         self._require_gui_thread("NewTree")
         interactive = path is None
-        if interactive:
+        if path is None:
             if not self.ConfirmDiscardChanges():
                 return False
             suggestion = self._suggested_path(f"behavior_tree{TREE_FILE_SUFFIX}.json")
@@ -746,7 +747,7 @@ class BehaviorTreeWidget(QTabWidget):
         """
         self._require_gui_thread("LoadTree")
         interactive = path is None
-        if interactive:
+        if path is None:
             if not self.ConfirmDiscardChanges():
                 return False
             path, _ = QFileDialog.getOpenFileName(
@@ -803,7 +804,7 @@ class BehaviorTreeWidget(QTabWidget):
         """
         self._require_gui_thread("SaveTree")
         interactive = path is None
-        if interactive:
+        if path is None:
             current = self._document.path
             suggestion = tree_file_paths(current)[0] if current else None
             path = self._ask_save_path(
@@ -1476,7 +1477,8 @@ class BehaviorTreeWidget(QTabWidget):
             raise TreeFileError(f"'{os.path.basename(path)}' could not be loaded: {error}") from error
         finally:
             self._loading = False
-        parent_scope = self._levels.top.scope if self._levels else ()
+        top = self._levels.top
+        parent_scope = top.scope if top is not None else ()
         level = ZoomLevel(document, (*parent_scope, node.GetId()), node)
         self._connect_view(view)
         for added in view.nodes():
@@ -1557,8 +1559,8 @@ class BehaviorTreeWidget(QTabWidget):
         """Show the tree itself again; unsaved changes of the sub-trees shown are discarded."""
         if not self._levels:
             return
-        while self._levels:
-            self._close_level(self._levels.top)
+        while (top := self._levels.top) is not None:
+            self._close_level(top)
         self._after_zoom_change()
 
     def _save_level(self, level: ZoomLevel, report_problems: bool) -> list[str]:
@@ -1667,8 +1669,11 @@ class BehaviorTreeWidget(QTabWidget):
     @staticmethod
     def _reread_blackboard(plan: TreePlan) -> None:
         """Take the entries of ``plan``'s blackboard file again (it was just written by this widget)."""
+        path = plan.blackboard_path
+        if path is None:
+            return
         try:
-            items = read_blackboard_file(plan.blackboard_path)
+            items = read_blackboard_file(path)
         except TreeFileError:  # keep the entries read before
             log.debug("could not read the blackboard file again", exc_info=True)
             return
@@ -1727,7 +1732,7 @@ class BehaviorTreeWidget(QTabWidget):
         self._set_log_file(path)
         # What the blackboard file holds: the entries just read, so an unchanged blackboard is not
         # written. (For a file without blackboard file, the first change creates it.)
-        file_exists = bool(plan.blackboard_path) and os.path.exists(plan.blackboard_path)
+        file_exists = os.path.exists(plan.blackboard_path) if plan.blackboard_path else False
         self._blackboard_file.adopt(plan.blackboard_path, file_holds_store=file_exists)
         self._set_tree_loaded(True)
         self._set_modified(False)

@@ -314,7 +314,7 @@ class BoxNodeWidget(NodeWidget):
     # ------------------------------------------------------------------ persistence
     def _load_box_size(self, data: dict) -> None:
         """Apply a saved ``width`` / ``height`` (invalid values are ignored with a warning)."""
-        size = list(self.GetBoxSize())
+        size: list[float] = list(self.GetBoxSize())
         for index, key in enumerate(("width", "height")):
             value = data.get(key)
             if value is None:
@@ -397,15 +397,16 @@ class NotesNodeWidget(BoxNodeWidget):
 
     def _on_text_set(self, runtime: bool = False) -> None:
         text = self.GetText()
-        if self._editing and self._editor.toPlainText() != text:
-            with QSignalBlocker(self._editor):
-                self._editor.setPlainText(text)
+        editor = self.text_editor()
+        if self._editing and editor.toPlainText() != text:
+            with QSignalBlocker(editor):
+                editor.setPlainText(text)
         self._refresh_text()
         self.textChanged.emit(text)
         self.changed.emit(runtime)
 
     def _on_editor_text_changed(self) -> None:
-        text = self._editor.toPlainText()
+        text = self.text_editor().toPlainText()
         with self._lock:
             if text == self._text:
                 return
@@ -429,7 +430,9 @@ class NotesNodeWidget(BoxNodeWidget):
 
     def text_editor(self) -> QPlainTextEdit:
         """The editor shown while the text is edited (for tests and customisation)."""
-        return self._editor
+        editor = self._editor
+        assert editor is not None, "created in __init__"
+        return editor
 
     # ------------------------------------------------------------------ editing
     def IsEditing(self) -> bool:
@@ -442,7 +445,7 @@ class NotesNodeWidget(BoxNodeWidget):
         ``position`` (in node coordinates) places the text cursor there; without it the
         cursor goes to the end of the text.
         """
-        editor = self._editor
+        editor = self.text_editor()
         if not self._editing:
             self._editing = True
             with QSignalBlocker(editor):
@@ -465,7 +468,7 @@ class NotesNodeWidget(BoxNodeWidget):
         if not self._editing:
             return
         self._editing = False
-        editor = self._editor
+        editor = self.text_editor()
         if editor.hasFocus() or self.focusWidget() is editor:
             editor.clearFocus()
         editor.hide()

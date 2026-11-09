@@ -156,7 +156,7 @@ def _apply_saved_node_data(node: NodeWidget, item: dict, label: str, problems: l
             try:
                 decoded[key] = decode_value(value)
             except TreeFileError as error:
-                if placeholder:
+                if isinstance(node, UnknownLeafNodeWidget):  # a placeholder keeps the value as it was saved
                     node._raw_fields[key] = value
                     problems.append(f"field {key!r} of node {label} could not be read ({error}); it is kept unchanged")
                 else:
@@ -188,8 +188,10 @@ def prepare_connections(plan: TreePlan, items: Any, problems: list[str]) -> None
             problems.append(f"connection {index} is not an object and was skipped")
             continue
         parent_id, child_id = item.get("parent"), item.get("child")
-        parent = by_id.get(parent_id) if isinstance(parent_id, str) else None
-        child = by_id.get(child_id) if isinstance(child_id, str) else None
+        if not isinstance(parent_id, str) or not isinstance(child_id, str):
+            problems.append(f"connection {index} refers to a missing node and was skipped")
+            continue
+        parent, child = by_id.get(parent_id), by_id.get(child_id)
         if parent is None or child is None:
             problems.append(f"connection {index} refers to a missing node and was skipped")
             continue
@@ -272,6 +274,8 @@ def load_detached_tree(
         for parent_id, child_id in plan.connections:
             document.link(by_id[parent_id], by_id[child_id])
         root = document.root()
+        if root is None:  # prepare_nodes always adds one
+            raise ValueError("the tree has no root node")
         nodes = iter_subtree(root)
     except Exception as error:
         for node, _ in prepared:
@@ -369,7 +373,9 @@ def node_data(node: NodeWidget, problems: list[str], quiet: bool = False, check_
         skip(f"{what} of node {node.GetTitle()!r} was not saved: it is nested too deeply to be written")
         return False
 
-    pos = node._item.pos()
+    item = node._item
+    assert item is not None, "only nodes in a view are written"
+    pos = item.pos()
     entry: dict[str, Any] = {
         "id": node.GetId(),
         "type": node.GetTypeName(),

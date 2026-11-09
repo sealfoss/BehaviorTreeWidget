@@ -651,17 +651,18 @@ class TreeView(QGraphicsView):
         if source is None or hit.kind != Hit.LABEL:
             return None
         source_node, source_kind = source
-        if hit.node is source_node or hit.label_kind == source_kind:
+        node, label_kind = hit.node, hit.label_kind  # set for every label hit
+        if node is None or label_kind is None or node is source_node or label_kind == source_kind:
             return None
-        parent, child = (source_node, hit.node) if source_kind == CHILDREN else (hit.node, source_node)
+        parent, child = (source_node, node) if source_kind == CHILDREN else (node, source_node)
         if not self.can_connect(parent, child):
             return None
-        return (hit.node, hit.label_kind)
+        return (node, label_kind)
 
     def _clear_scene_focus(self) -> None:
         scene = self.scene()
         if scene.focusItem() is not None:
-            scene.setFocusItem(None)
+            scene.setFocusItem(None)  # type: ignore[arg-type]  # Qt takes nullptr: no item has the focus
         self.setFocus(Qt.FocusReason.MouseFocusReason)
 
     # ================================================================== mouse gestures
@@ -735,8 +736,10 @@ class TreeView(QGraphicsView):
         self._press_empty(event, hit, pos)
 
     def _press_label(self, event, hit: Hit, pos: QPoint) -> None:
+        node, label_kind = hit.node, hit.label_kind
+        assert node is not None and label_kind is not None, "a label hit names its node and label"
         if not self._locked:
-            self._begin_connecting(hit.node, hit.label_kind, pos)
+            self._begin_connecting(node, label_kind, pos)
         # While executing, connection labels do nothing (they never move the node).
         event.accept()
 
@@ -747,35 +750,39 @@ class TreeView(QGraphicsView):
         super().mousePressEvent(event)
 
     def _press_resize(self, event, hit: Hit, pos: QPoint) -> None:
+        node, handle = hit.node, hit.widget
+        assert isinstance(node, BoxNodeWidget) and isinstance(handle, ResizeHandle), "a resize hit names both"
         toggle, extend = self._modifiers(event)
         if toggle:
             # As on a node: Ctrl + drag pans, Ctrl + click toggles the note in the selection.
-            self._begin_pan(pos, Qt.MouseButton.LeftButton, toggles=hit.node)
+            self._begin_pan(pos, Qt.MouseButton.LeftButton, toggles=node)
         elif extend:
             self._clear_scene_focus()
-            self.select_nodes([hit.node], add=True)
+            self.select_nodes([node], add=True)
         else:
-            selected = self.is_node_selected(hit.node)
+            selected = self.is_node_selected(node)
             if not selected:
-                self.select_nodes([hit.node])
-            self._begin_resize(hit.node, hit.widget, pos, click_selects=hit.node if selected else None)
+                self.select_nodes([node])
+            self._begin_resize(node, handle, pos, click_selects=node if selected else None)
         event.accept()
 
     def _press_node(self, event, hit: Hit, pos: QPoint) -> None:
+        node = hit.node
+        assert node is not None, "a node hit names its node"
         toggle, extend = self._modifiers(event)
         if toggle:
             # Ctrl + drag pans; Ctrl + click (without dragging) toggles the node in the selection.
-            self._begin_pan(pos, Qt.MouseButton.LeftButton, toggles=hit.node)
+            self._begin_pan(pos, Qt.MouseButton.LeftButton, toggles=node)
         elif extend:
             # Shift + click adds the node to the selection.
             self._clear_scene_focus()
-            self.select_nodes([hit.node], add=True)
+            self.select_nodes([node], add=True)
         else:
             # Pressing a selected node keeps the selection, so dragging moves all of it.
-            selected = self.is_node_selected(hit.node)
+            selected = self.is_node_selected(node)
             if not selected:
-                self.select_nodes([hit.node])
-            self._begin_move(hit.node, pos, click_selects=hit.node if selected else None)
+                self.select_nodes([node])
+            self._begin_move(node, pos, click_selects=node if selected else None)
         event.accept()
 
     def _press_empty(self, event, hit: Hit, pos: QPoint) -> None:
@@ -1004,7 +1011,9 @@ class TreeView(QGraphicsView):
         if pasted:
             area = QRectF()
             for node in pasted:
-                area = area.united(node.scene_rect())
+                rect = node.scene_rect()
+                if rect is not None:  # pasted nodes are in this view
+                    area = area.united(rect)
             self.ensureVisible(area, 40, 40)
         return pasted
 
@@ -1052,9 +1061,9 @@ class TreeView(QGraphicsView):
                 hit.widget.setFocus(Qt.FocusReason.MouseFocusReason)
             super().contextMenuEvent(event)
             return
-        if hit.kind in (Hit.NODE, Hit.LABEL, Hit.RESIZE):
+        if hit.kind in (Hit.NODE, Hit.LABEL, Hit.RESIZE) and hit.node is not None:
             menu = self.build_node_menu(hit.node)
-        elif hit.kind == Hit.CONNECTION:
+        elif hit.kind == Hit.CONNECTION and hit.connection is not None:
             self.select_connection(hit.connection)
             menu = self.build_connection_menu(hit.connection)
         else:
@@ -1177,7 +1186,7 @@ class TreeView(QGraphicsView):
                 self._reset_gesture()
             self.viewport().update()
 
-    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
+    def drawBackground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         palette = self.palette()
         base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
         painter.fillRect(rect, base)
@@ -1205,7 +1214,7 @@ class TreeView(QGraphicsView):
                 painter.drawLines(batch)
         painter.restore()
 
-    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+    def drawForeground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         if self.isEnabled():
             return
         painter.save()

@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import shiboken6
 from PySide6.QtCore import QSignalBlocker
@@ -239,7 +239,9 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
 
     def literal_editor(self) -> QWidget:
         """The widget currently named ``LiteralValue`` (its class follows the entry type)."""
-        return self._literal_editor
+        editor = self._literal_editor
+        assert editor is not None, "found in __init__"
+        return editor
 
     # ------------------------------------------------------------------ execution helpers
     def _operands(self, tree: BehaviorTreeWidget | None) -> tuple[str, Any]:
@@ -294,7 +296,7 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
             relayout = True
         self._show_literal(literal, kind)
         use_literal = compare is None
-        editor = self._literal_editor
+        editor = self.literal_editor()
         hidden = editor.isHidden()
         editor.setVisible(use_literal)
         editor.setEnabled(use_literal and kind in LITERAL_TYPES)
@@ -339,9 +341,12 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
         return items
 
     def _replace_literal_editor(self, kind: str | None) -> None:
-        old = self._literal_editor
+        old = self.literal_editor()
         editor = self._make_literal_editor(kind)
-        old.parentWidget().layout().replaceWidget(old, editor)
+        parent = old.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        assert layout is not None, "the LiteralValue editor of the .ui file lies in a layout"
+        layout.replaceWidget(old, editor)
         old.setObjectName("")  # findChild must not find the old editor before it is deleted
         old.hide()
         old.deleteLater()
@@ -380,7 +385,7 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
         return editor
 
     def _show_literal(self, literal: Any, kind: str | None) -> None:
-        editor = self._literal_editor
+        editor = self.literal_editor()
         value = convert_literal(literal, kind) if kind in LITERAL_TYPES else literal
         with QSignalBlocker(editor):
             if isinstance(editor, FloatSpinBox):
@@ -423,7 +428,8 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
 
     # ------------------------------------------------------------------ user edits
     def _on_value_name_chosen(self, index: int) -> None:
-        name = self._value_box.itemData(index) if index >= 0 else None
+        box = self._value_box
+        name = box.itemData(index) if box is not None and index >= 0 else None
         if not isinstance(name, str):
             return
         types = self._entry_types()
@@ -447,9 +453,10 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
         self._refresh_editors()
 
     def _on_compare_to_chosen(self, index: int) -> None:
-        if index < 0:
+        box = self._compare_box
+        if index < 0 or box is None:
             return
-        data = self._compare_box.itemData(index)
+        data = box.itemData(index)
         compare = data if isinstance(data, str) and data else None
         with self._lock:
             if self._fields.get(COMPARE_TO) == compare:
@@ -459,7 +466,7 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
         self._refresh_editors()
 
     def _on_literal_edited(self, *_args) -> None:
-        editor, kind = self._literal_editor, self._literal_type
+        editor, kind = self.literal_editor(), self._literal_type
         if isinstance(editor, FloatSpinBox):
             value: Any = editor.float_value()
         elif isinstance(editor, QSpinBox):
@@ -469,13 +476,13 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
             editor.setText("True" if value else "False")
         elif kind in CONTAINER_TYPES:
             try:
-                value = parse_container_text(kind, editor.text())
+                value = parse_container_text(kind, cast(QLineEdit, editor).text())  # their editor is a line edit
             except ValueError as error:
                 self._mark_invalid_literal(str(error))
                 return
             self._mark_invalid_literal(None)
         else:
-            value = editor.text()
+            value = cast(QLineEdit, editor).text()  # a String's editor
         with self._lock:
             if _same(self._fields.get(LITERAL_VALUE), value):
                 return

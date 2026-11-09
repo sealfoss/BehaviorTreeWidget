@@ -21,7 +21,7 @@ import traceback
 import weakref
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import py_trees
 from py_trees.common import Status
@@ -72,7 +72,7 @@ def describe_error(error: BaseException) -> str:
 def _on_run_takes_tree(cls: type) -> bool:
     """True if ``cls.OnRun`` accepts the tree argument (``OnRun(self, tree)``)."""
     try:
-        signature = inspect.signature(cls.OnRun)
+        signature = inspect.signature(cast(Any, cls).OnRun)  # a LeafNodeWidget subclass
     except (TypeError, ValueError):
         return True
     positional = 0
@@ -86,15 +86,19 @@ def _on_run_takes_tree(cls: type) -> bool:
 
 def call_on_run(node: LeafNodeWidget, tree: BehaviorTreeWidget | None) -> Any:
     """Call ``node.OnRun(tree)`` (or ``node.OnRun()`` for overrides without the argument)."""
-    if _on_run_takes_tree(type(node)):
-        return node.OnRun(tree)
-    return node.OnRun()
+    on_run: Callable[..., Any] = node.OnRun  # overrides may leave out the tree argument
+    cls: type = type(node)  # the cache key (a class)
+    if _on_run_takes_tree(cls):
+        return on_run(tree)
+    return on_run()
 
 
 class LeafExecutor(Protocol):
     """What a :class:`LeafBehaviour` needs from the executor running it (``TreeExecutor``)."""
 
-    token_owner: object  # marks the run tokens of this executor
+    @property
+    def token_owner(self) -> object:
+        """Marks the run tokens of this executor."""
 
     def tree_widget(self) -> BehaviorTreeWidget:
         """The ``tree`` passed to ``OnStart`` / ``OnRun`` / ``OnTerminate``."""
@@ -199,35 +203,39 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
 
     def _run_threaded(self) -> Status:
         """Start ``OnRun`` on a worker thread, or collect the call started on an earlier tick."""
-        if self._future is None:
-            if not self._start_call():
+        token = self.token
+        assert token is not None, "set by initialise()"
+        future = self._future
+        if future is None:
+            future = self._start_call(token)
+            if future is None:
                 return Status.FAILURE
             wait = max(0.0, float(getattr(self.node, "THREAD_WAIT", 0.0) or 0.0))
-            if not self.executor.wait_for_call(self._future, wait):
+            if not self.executor.wait_for_call(future, wait):
                 return Status.RUNNING  # not waited for: the result is collected on a later tick
-        if not self._future.done() or self.executor.is_aborting() or self.token.is_cancelled():
+        if not future.done() or self.executor.is_aborting() or token.is_cancelled():
             # Still executing, or interrupted meanwhile: an interrupted call's result is ignored;
             # the pending halt / preemption terminates the node.
             return Status.RUNNING
-        future, self._future = self._future, None
+        self._future = None
         error = future.exception()
         if error is not None:
             self._record_error(error, "OnRun")
             return Status.FAILURE
         return self._result_status(future.result())
 
-    def _start_call(self) -> bool:
-        """Start ``OnRun`` on a worker thread; False (error recorded) if that failed."""
-        token = self.token
+    def _start_call(self, token: RunToken) -> Future | None:
+        """Start ``OnRun`` on a worker thread and return its future; None (error recorded) if that failed."""
         try:
-            self._future = self.executor.start_call(
+            future = self.executor.start_call(
                 functools.partial(self._run_bound, token), f"behavior_tree_widget:{self.node.GetTitle()}"
             )
         except Exception as error:  # noqa: BLE001 - e.g. "can't start new thread"
             self._record_error(error, "OnRun")
-            return False
-        self.node._worker_future = self._future
-        return True
+            return None
+        self._future = future
+        self.node._worker_future = future
+        return future
 
     def _result_status(self, result: Any) -> Status:
         """The status of an ``OnRun`` return value (an invalid one is an error)."""
