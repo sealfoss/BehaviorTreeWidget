@@ -27,7 +27,7 @@ from behavior_tree_widget import (
     SubTreeNodeWidget,
     TreeFileError,
 )
-from behavior_tree_widget import widget as widget_module
+from behavior_tree_widget import document as document_module
 from behavior_tree_widget.canvas import TreeView
 from behavior_tree_widget.groups import GROUP
 from behavior_tree_widget.serialization import FORMAT_NAME
@@ -514,7 +514,7 @@ def test_go_back_keeps_the_level_when_saving_fails(tree, chain, monkeypatch, dia
     def fail(*_args, **_kwargs):
         raise PermissionError("read-only")
 
-    monkeypatch.setattr(widget_module, "write_json_atomic", fail)
+    monkeypatch.setattr(document_module, "write_json_atomic", fail)  # sub-trees are written by their document
     with pytest.raises(OSError):
         tree.GoBack(save=True)
     assert tree.GetZoomDepth() == 1 and tree.IsModified()

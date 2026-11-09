@@ -1412,7 +1412,7 @@ def test_set_config_clamps_tick_interval(bt, interval, expected):
 @pytest.mark.parametrize("window_modified", [False, True])
 def test_window_title_escapes_qt_placeholder(qtbot, bt, tmp_path, filename, shown, window_modified):
     bt.setWindowModified(window_modified)
-    bt._file_path = str(tmp_path / filename)  # '*' is not allowed in Windows file names
+    bt._document.path = str(tmp_path / filename)  # '*' is not allowed in Windows file names
     bt._update_window_title()
     qtbot.wait(5)
     assert bt.windowHandle() is not None
@@ -1589,7 +1589,7 @@ def test_new_tree_errors_raise_programmatically_and_show_critical_interactively(
 def test_confirm_discard_changes_save_failure_shows_critical(bt, dialogs, tmp_path):
     bt.AddNode("Succeed", 0, 200)
     assert bt.IsModified()
-    bt._file_path = str(tmp_path / "gone" / "tree.json")
+    bt._document.path = str(tmp_path / "gone" / "tree.json")
     dialogs.question_answer = QMessageBox.StandardButton.Save
     dialogs.save_path = str(tmp_path / "other.json")
     with capture_exceptions() as exceptions:
