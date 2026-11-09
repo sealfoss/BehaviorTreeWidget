@@ -56,8 +56,7 @@ class FloatSpinBox(QDoubleSpinBox):
     # ------------------------------------------------------------------ value
     def set_float(self, value: float) -> None:
         """Show ``value`` (any float, including nan and +/-inf) without emitting signals."""
-        blocked = self.blockSignals(True)
-        try:
+        with QSignalBlocker(self):
             self._pending_exact, self._pending_report = None, False
             self._exact, self._exact_at = value, None
             if math.isnan(value):
@@ -68,8 +67,6 @@ class FloatSpinBox(QDoubleSpinBox):
             text = self.textFromValue(self._exact_at)
             if self.lineEdit().text() != text:
                 self.lineEdit().setText(text)
-        finally:
-            self.blockSignals(blocked)
 
     def float_value(self) -> float:
         """The value shown: exact, nan and +/-inf included."""

@@ -224,63 +224,78 @@ class EntryRow(QWidget):
 
         self.select_box: QCheckBox = self._ui.findChild(QCheckBox, "Select")
         self.name_edit: QLineEdit = self._ui.findChild(QLineEdit, "ValueName")
-        self.value_widget: QWidget = self._ui.findChild(QWidget, spec.value_widget) or self._ui.findChild(
-            QWidget, "Value"
-        )
-        if self.select_box is None or self.name_edit is None or self.value_widget is None:
+        value_widget = self._ui.findChild(QWidget, spec.value_widget) or self._ui.findChild(QWidget, "Value")
+        if self.select_box is None or self.name_edit is None or value_widget is None:
             raise RuntimeError(f"{spec.ui_file} must contain Select, ValueName and {spec.value_widget} widgets")
-        self.edit_button: QToolButton | None = None
-        self.reset_box: QCheckBox | None = self._ui.findChild(QCheckBox, "Reset")
-        if self.reset_box is None:  # a ui file without the Resets check box
-            self.reset_box = QCheckBox("Resets", self._ui)
-            self.reset_box.setObjectName("Reset")
-            self._ui.layout().addWidget(self.reset_box)
-        self.reset_box.setToolTip(RESET_TOOLTIP)
+        self.edit_button: QToolButton | None = None  # containers: the Edit... button (see _build_value_editor)
+        self.reset_box: QCheckBox = self._reset_check_box()
         self.move_up_button: QToolButton = self._move_button("MoveUp", Qt.ArrowType.UpArrow, MOVE_UP_TOOLTIP)
         self.move_down_button: QToolButton = self._move_button("MoveDown", Qt.ArrowType.DownArrow, MOVE_DOWN_TOOLTIP)
-        self.move_up_button.clicked.connect(lambda _checked=False: self._on_move_clicked(-1))
-        self.move_down_button.clicked.connect(lambda _checked=False: self._on_move_clicked(1))
-
+        self.value_widget: QWidget = self._build_value_editor(value_widget)
         self.name_edit.setText(name)
         self.name_edit.setToolTip(f"{type_name} entry - edit to rename")
-        self.name_edit.editingFinished.connect(self._on_name_edited)
-        self.select_box.toggled.connect(self.selectionToggled)
         self.refresh_reset()
-        self.reset_box.toggled.connect(self._on_reset_toggled)
+        self.refresh_value()
+        self._wire_signals()  # last: showing the store's state above reports nothing
 
-        widget = self.value_widget
+    def _reset_check_box(self) -> QCheckBox:
+        """The Resets check box of the ui file (created when the file has none)."""
+        box = self._ui.findChild(QCheckBox, "Reset")
+        if box is None:  # a ui file without the Resets check box
+            box = QCheckBox("Resets", self._ui)
+            box.setObjectName("Reset")
+            self._ui.layout().addWidget(box)
+        box.setToolTip(RESET_TOOLTIP)
+        return box
+
+    def _build_value_editor(self, widget: QWidget) -> QWidget:
+        """Prepare the value editor ``widget`` of the ui file for the entry's type and return the editor
+        to use: a Double gets a FloatSpinBox, an Object a read-only text, a container an Edit... button."""
+        type_name = self.type_name
         if type_name == "Double" and isinstance(widget, QDoubleSpinBox) and not isinstance(widget, FloatSpinBox):
             # Show any float exactly (and nan/inf) instead of 8 fixed decimals.
             replacement = FloatSpinBox(widget.parentWidget())
             replacement.setObjectName(widget.objectName())
             replacement.setSizePolicy(widget.sizePolicy())
             replacement.setMinimumSize(widget.minimumSize())
-            layout = widget.parentWidget().layout()
-            layout.replaceWidget(widget, replacement)
+            widget.parentWidget().layout().replaceWidget(widget, replacement)
             widget.hide()  # until it is deleted
             widget.deleteLater()
-            widget = self.value_widget = replacement
+            widget = replacement
         if type_name == "Object":
             widget.setReadOnly(True)
             widget.setToolTip("Set from code; not editable here")
         elif isinstance(widget, QAbstractSpinBox):
             widget.setKeyboardTracking(True)
-            widget.valueChanged.connect(self._on_value_edited)
-        elif isinstance(widget, QCheckBox):
-            widget.toggled.connect(self._on_value_edited)
-        elif isinstance(widget, QLineEdit):
-            widget.textChanged.connect(self._on_value_edited)
         elif isinstance(widget, QComboBox):
             widget.setPlaceholderText("(empty)")
             self.edit_button = QToolButton(self._ui)
             self.edit_button.setObjectName("EditValue")
             self.edit_button.setText("Edit...")
             self.edit_button.setToolTip(f"Edit the {type_name.lower()} as a Python literal")
-            self.edit_button.clicked.connect(self._on_edit_clicked)
             frame = self._ui.findChild(QFrame, "FrameValue")
             container = frame.layout() if frame is not None and frame.layout() is not None else self._ui.layout()
             container.addWidget(self.edit_button)
-        self.refresh_value()
+        return widget
+
+    def _wire_signals(self) -> None:
+        """Connect the row's buttons and editors to their handlers."""
+        self.move_up_button.clicked.connect(lambda _checked=False: self._on_move_clicked(-1))
+        self.move_down_button.clicked.connect(lambda _checked=False: self._on_move_clicked(1))
+        self.name_edit.editingFinished.connect(self._on_name_edited)
+        self.select_box.toggled.connect(self.selectionToggled)
+        self.reset_box.toggled.connect(self._on_reset_toggled)
+        if self.edit_button is not None:
+            self.edit_button.clicked.connect(self._on_edit_clicked)
+        widget = self.value_widget
+        if self.type_name == "Object":
+            return  # read-only: only refresh_value changes it
+        if isinstance(widget, QAbstractSpinBox):
+            widget.valueChanged.connect(self._on_value_edited)
+        elif isinstance(widget, QCheckBox):
+            widget.toggled.connect(self._on_value_edited)
+        elif isinstance(widget, QLineEdit):
+            widget.textChanged.connect(self._on_value_edited)
 
     def _move_button(self, name: str, arrow: Qt.ArrowType, tooltip: str) -> QToolButton:
         """The arrow button ``name`` of the ui file (created when the file has none)."""
@@ -305,9 +320,8 @@ class EntryRow(QWidget):
         return self.select_box.isChecked()
 
     def set_selected(self, selected: bool) -> None:
-        self.select_box.blockSignals(True)
-        self.select_box.setChecked(selected)
-        self.select_box.blockSignals(False)
+        with QSignalBlocker(self.select_box):
+            self.select_box.setChecked(selected)
 
     def set_name(self, name: str) -> None:
         self.name = name
@@ -336,11 +350,8 @@ class EntryRow(QWidget):
             return
         box = self.reset_box
         if box.isChecked() != reset:
-            blocked = box.blockSignals(True)
-            try:
+            with QSignalBlocker(box):
                 box.setChecked(reset)
-            finally:
-                box.blockSignals(blocked)
 
     def _on_move_clicked(self, offset: int) -> None:
         if self._is_current():
@@ -372,8 +383,7 @@ class EntryRow(QWidget):
         except KeyError:
             return
         widget = self.value_widget
-        widget.blockSignals(True)
-        try:
+        with QSignalBlocker(widget):
             if self.type_name == "Object":
                 text = safe_repr(value)
                 widget.setText(text)
@@ -390,10 +400,7 @@ class EntryRow(QWidget):
                 widget.setChecked(value)
                 widget.setText("True" if value else "False")
             elif isinstance(widget, QLineEdit):
-                if widget.text() != value:
-                    widget.setText(value)
-                    if not widget.hasFocus():
-                        widget.setCursorPosition(0)  # show the start of long text
+                set_text_quietly(widget, value)  # the start of long text shows unless the user is typing
             elif isinstance(widget, QComboBox):
                 items = container_items(self.type_name, value)
                 current = widget.currentIndex()
@@ -403,8 +410,6 @@ class EntryRow(QWidget):
                 if items:
                     widget.setCurrentIndex(min(max(current, 0), len(items) - 1))
                 widget.setToolTip(safe_repr(value))
-        finally:
-            widget.blockSignals(False)
 
     # ------------------------------------------------------------------ user edits
     def _on_value_edited(self, value: Any) -> None:
@@ -574,9 +579,8 @@ class BlackboardView(QWidget):
     def _update_select_all(self) -> None:
         rows = list(self._rows.values())
         all_selected = bool(rows) and all(row.is_selected() for row in rows)
-        self.select_all.blockSignals(True)
-        self.select_all.setChecked(all_selected)
-        self.select_all.blockSignals(False)
+        with QSignalBlocker(self.select_all):
+            self.select_all.setChecked(all_selected)
 
     # ------------------------------------------------------------------ store signals
     def _on_entry_added(self, name: str) -> None:
