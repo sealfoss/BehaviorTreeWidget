@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsProxyWidget, QGraphicsRectItem, QWidget
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsProxyWidget, QGraphicsRectItem, QWidget
 
 from .geometry import anchor_point, connection_path
 from .nodes import CHILDREN, CONNECTION_COLORS, PARENT, STATUS_COLORS, ConnectionState, NodeStatus, NodeWidget
@@ -118,6 +118,8 @@ class ConnectionItem(QGraphicsPathItem):
         self._curve = QPainterPath()
         self._line_pen = QPen()
         QGraphicsPathItem.setPen(self, QPen(Qt.PenStyle.NoPen))  # Qt's shape is then the hit area itself
+        # paint() gets the exposed rect, to skip lines that only pass by a repainted area.
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemUsesExtendedStyleOption, True)
         self.setZValue(-1.0)
         self._apply_pen()
         self.update_path()
@@ -175,6 +177,7 @@ class ConnectionItem(QGraphicsPathItem):
         stroker.setWidth(LINE_HIT_WIDTH)
         stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
         area = stroker.createStroke(self._curve)
+        area.setFillRule(Qt.FillRule.WindingFill)  # overlapping outlines add up instead of leaving holes
         if self._order:
             badge = QPainterPath()
             badge.addEllipse(self._badge_rect().adjusted(*self._badge_margins()))
@@ -203,6 +206,9 @@ class ConnectionItem(QGraphicsPathItem):
 
     # ------------------------------------------------------------------ painting
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
+        exposed = option.exposedRect
+        if not exposed.contains(self.boundingRect()) and not QGraphicsPathItem.path(self).intersects(exposed):
+            return  # the repainted area only lies within the bounds, not on the line (long lines in a fan)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(self._line_pen)
