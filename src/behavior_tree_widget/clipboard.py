@@ -18,7 +18,7 @@ import shiboken6
 from PySide6.QtCore import QByteArray, QMimeData
 from PySide6.QtGui import QGuiApplication
 
-from .canvas import clamp_to_scene, nearest_free_offset
+from .geometry import clamp_to_scene, nearest_free_offset
 from .groups import GroupNodeWidget, default_group_number
 from .nodes import NodeWidget, RootNodeWidget
 from .registry import ROOT, NodeTypeRegistry

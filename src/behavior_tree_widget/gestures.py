@@ -165,7 +165,7 @@ class PanGesture(Gesture):
         view = self.view
         toggled = self.toggles if not self.panned else None
         view._reset_gesture()
-        if toggled is not None and toggled in view._nodes:
+        if toggled is not None and toggled in view.document:
             if view.is_node_selected(toggled):
                 view.deselect_nodes([toggled])
             else:
@@ -336,7 +336,7 @@ class BandGesture(Gesture):
         if rect.width() > 0 and rect.height() > 0:
             for item in view.scene().items(rect, Qt.ItemSelectionMode.IntersectsItemBoundingRect):
                 node = item.node if isinstance(item, NodeItem) else None
-                if node is None or node not in view._nodes:
+                if node is None or node not in view.document:
                     continue
                 # A group is selected by touching its title bar (a rectangle inside it selects its nodes).
                 if isinstance(node, GroupNodeWidget) and not node.scene_header_rect().intersects(rect):
@@ -452,7 +452,7 @@ class ConnectGesture(Gesture):
         source, hover = self.source, self.hover
         self.source = self.hover = None
         for pair in (source, hover):
-            if pair is not None and pair[0] in view._nodes:
+            if pair is not None and pair[0] in view.document:
                 view._refresh_label_states(pair[0])
         if source is not None and target is not None and not view._locked:
             source_node, source_kind = source

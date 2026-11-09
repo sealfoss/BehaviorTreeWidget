@@ -193,8 +193,8 @@ class BehaviorTreeWidget(QTabWidget):
         self._frame_layout = frame_layout
         self._main_view = TreeView(self, frame_view)  # the tree itself; sub-trees get views of their own
         frame_layout.addWidget(self._main_view)
-        # The tree itself: its view, file and options (sub-trees shown with Zoom In have their own).
-        self._document = TreeDocument(self._main_view)
+        # The tree itself: its nodes, file and options (sub-trees shown with Zoom In have their own).
+        self._document = self._main_view.document
         self._tree_log.set_level(self._config.log_level)
         self._buttons: dict[str, QPushButton] = {}
         for name in BUTTON_NAMES:
@@ -1456,8 +1456,8 @@ class BehaviorTreeWidget(QTabWidget):
             raise
         except Exception as error:  # noqa: BLE001
             raise TreeFileError(f"'{os.path.basename(path)}' could not be loaded: {error}") from error
-        view = TreeView(self, self._frame_view)
-        view.base_folder = os.path.dirname(path)  # relative sub-tree file names inside it
+        document = TreeDocument(path, plan.config, legacy_blackboard=data.get("blackboard"))
+        view = TreeView(self, self._frame_view, document)  # relative sub-tree file names are relative to its folder
         view.hide()
         self._loading = True
         try:
@@ -1470,7 +1470,6 @@ class BehaviorTreeWidget(QTabWidget):
         finally:
             self._loading = False
         parent_scope = self._levels.top.scope if self._levels else ()
-        document = TreeDocument(view, path, plan.config, legacy_blackboard=data.get("blackboard"))
         level = ZoomLevel(document, (*parent_scope, node.GetId()), node)
         self._connect_view(view)
         for added in view.nodes():

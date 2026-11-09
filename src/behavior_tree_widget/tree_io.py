@@ -20,7 +20,7 @@ import shiboken6
 from PySide6.QtCore import QPointF
 
 from .blackboard import BlackboardStore
-from .canvas import clamp_to_scene, iter_subtree
+from .geometry import clamp_to_scene, iter_subtree
 from .config import TreeConfig
 from .nodes import COMPOSITE_TYPES, SEQUENCE, NodeWidget, RootNodeWidget, UnknownLeafNodeWidget, relayout
 from .registry import ROOT, NodeTypeRegistry
@@ -255,15 +255,19 @@ def load_detached_tree(data: dict, registry: NodeTypeRegistry, owner: Any, name:
         plan.discard()
         raise TreeFileError(f"'{name}' could not be loaded: {error}") from error
     prepared, plan.nodes = plan.nodes, []
+    from .document import TreeDocument  # noqa: PLC0415 - document.py imports this module
+
+    document = TreeDocument()  # a tree that is not shown
     try:
         by_id = {node.GetId(): node for node, _ in prepared}
         for node, position in prepared:
             node._tree = owner
             relayout(node)  # its size gives its place among its siblings, as in a view
             node._detached_order = (position.x() + node.width() / 2.0, position.y())
+            document.add(node)
         for parent_id, child_id in plan.connections:
-            by_id[parent_id]._link(by_id[child_id])
-        root = next(node for node, _ in prepared if isinstance(node, RootNodeWidget))
+            document.link(by_id[parent_id], by_id[child_id])
+        root = document.root()
         nodes = iter_subtree(root)
     except Exception as error:  # noqa: BLE001
         for node, _ in prepared:

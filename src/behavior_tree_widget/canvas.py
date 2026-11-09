@@ -35,7 +35,6 @@ gesture) and :mod:`.menus` (the context menus). This module re-exports their pub
 
 from __future__ import annotations
 
-import itertools
 import logging
 import math
 import weakref
@@ -82,6 +81,7 @@ from .items import (
     NodeItem,
     SelectionBandItem,
 )
+from .document import TreeDocument
 from .nodes import (
     CHILDREN,
     PARENT,
@@ -202,7 +202,13 @@ class TreeView(QGraphicsView):
 
     HINT_TEXT = "Click New to create a behavior tree or Load to open one."
 
-    def __init__(self, owner: "BehaviorTreeWidget | None" = None, parent: QWidget | None = None):
+    def __init__(
+        self,
+        owner: "BehaviorTreeWidget | None" = None,
+        parent: QWidget | None = None,
+        document: TreeDocument | None = None,
+    ):
+        """``document``: the tree shown (by default a new, empty one)."""
         super().__init__(parent)
         # Weak reference: the view is a child of the owner; a strong one would form a
         # reference cycle that keeps a closed top-level BehaviorTreeWidget alive.
@@ -226,13 +232,9 @@ class TreeView(QGraphicsView):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
 
-        #: Folder that relative sub-tree file names of Sub-Tree nodes in this view are relative to
-        #: (the folder of the sub-tree file shown); None: the folder of the tree file.
-        self.base_folder: str | None = None
-        # Every node, in the order they were added, with a number giving that order.
-        self._nodes: dict[NodeWidget, int] = {}
-        self._node_numbers = itertools.count()
-        self._root: RootNodeWidget | None = None
+        #: The tree shown: its nodes, their links and its file. The view adds the items drawing them.
+        self.document = document if document is not None else TreeDocument()
+        self.document.view = self
         self._connections: dict[NodeWidget, ConnectionItem] = {}  # keyed by child node
         self._selected_connection: ConnectionItem | None = None
         self._selected_nodes: dict[NodeWidget, None] = {}  # an ordered set
@@ -252,6 +254,12 @@ class TreeView(QGraphicsView):
     @property
     def _owner(self) -> "BehaviorTreeWidget | None":
         return self._owner_ref() if self._owner_ref is not None else None
+
+    @property
+    def base_folder(self) -> str | None:
+        """The folder relative sub-tree file names of the Sub-Tree nodes shown are relative to:
+        the folder of the tree file shown (None while it has no file)."""
+        return self.document.folder
 
     @property
     def _gesture(self) -> GestureKind:
@@ -280,11 +288,11 @@ class TreeView(QGraphicsView):
 
     # ================================================================== model
     def nodes(self) -> list[NodeWidget]:
-        """Every node of the view, in the order they were added."""
-        return list(self._nodes)
+        """Every node of the tree shown, in the order they were added."""
+        return self.document.nodes()
 
     def root(self) -> RootNodeWidget | None:
-        return self._root
+        return self.document.root()
 
     def connections(self) -> list[ConnectionItem]:
         return list(self._connections.values())
@@ -299,15 +307,14 @@ class TreeView(QGraphicsView):
     # ------------------------------------------------------------------ node selection
     def selected_nodes(self) -> list[NodeWidget]:
         """The selected nodes, in the order they were added to the view."""
-        numbers = self._nodes
-        return sorted(self._selected_nodes, key=lambda node: numbers.get(node, -1))
+        return sorted(self._selected_nodes, key=self.document.number)
 
     def is_node_selected(self, node: NodeWidget) -> bool:
         return node in self._selected_nodes
 
     def select_nodes(self, nodes: Iterable[NodeWidget], add: bool = False) -> None:
         """Select ``nodes`` (nodes not in this view are ignored); ``add`` keeps the current selection."""
-        wanted = dict.fromkeys(node for node in nodes if node in self._nodes)
+        wanted = dict.fromkeys(node for node in nodes if node in self.document)
         self._set_selection({**self._selected_nodes, **wanted} if add else wanted)
 
     def deselect_nodes(self, nodes: Iterable[NodeWidget]) -> None:
@@ -318,7 +325,7 @@ class TreeView(QGraphicsView):
         self._set_selection({})
 
     def select_all_nodes(self) -> None:
-        self._set_selection(dict.fromkeys(self._nodes))
+        self._set_selection(dict.fromkeys(self.document.nodes()))
 
     def _set_selection(self, selection: dict[NodeWidget, None]) -> None:
         changed = selection.keys() ^ self._selected_nodes.keys()
@@ -344,7 +351,7 @@ class TreeView(QGraphicsView):
         if self._locked and isinstance(self._active, ConnectGesture):
             self._finish_connecting(None)
         if was_locked and not self._locked:
-            for node in self._nodes:
+            for node in self.document.nodes():
                 if node._children:
                     self._refresh_order(node)
 
@@ -357,7 +364,7 @@ class TreeView(QGraphicsView):
         self._check_unlocked()
         if node._item is not None:
             raise ValueError(f"{node!r} is already part of a tree view")
-        if isinstance(node, RootNodeWidget) and self._root is not None:
+        if isinstance(node, RootNodeWidget) and self.document.root() is not None:
             raise ValueError("a tree can only have one root node")
         item = NodeItem(node, self)
         self.scene().addItem(item)
@@ -365,9 +372,7 @@ class TreeView(QGraphicsView):
         self.raise_node(node)
         node._canvas = self
         node._tree = self._owner
-        self._nodes[node] = next(self._node_numbers)
-        if isinstance(node, RootNodeWidget):
-            self._root = node
+        self.document.add(node)
         self._refresh_label_states(node)
         node._on_added_to_tree()
         self.nodeAdded.emit(node)
@@ -383,7 +388,7 @@ class TreeView(QGraphicsView):
         self.modified.emit()
 
     def _remove_node(self, node: NodeWidget) -> None:
-        if node not in self._nodes:
+        if node not in self.document:
             raise ValueError(f"{node!r} is not part of this view")
         active = self._active
         if active is not None and active.involves(node) and not isinstance(active, ConnectGesture):
@@ -398,9 +403,7 @@ class TreeView(QGraphicsView):
         self._disconnect(node)
         for child in list(node._children):
             self._disconnect(child)
-        del self._nodes[node]
-        if node is self._root:
-            self._root = None
+        self.document.remove(node)
         item = node._item
         node._canvas = None
         node._item = None
@@ -415,21 +418,12 @@ class TreeView(QGraphicsView):
         self._reset_gesture()
         self.select_connection(None)
         self.clear_node_selection()
-        for node in list(self._nodes):
+        for node in self.document.nodes():
             self._remove_node(node)
 
     def can_connect(self, parent: NodeWidget, child: NodeWidget) -> bool:
         """True if ``child`` may be connected below ``parent`` (no self links, no cycles)."""
-        if parent is child or parent not in self._nodes or child not in self._nodes:
-            return False
-        if not parent.HasChildConnections() or not child.HasParentConnection():
-            return False
-        ancestor = parent
-        while ancestor is not None:  # child must not be an ancestor of parent
-            if ancestor is child:
-                return False
-            ancestor = ancestor._parent
-        return True
+        return self.document.can_connect(parent, child)
 
     def connect_nodes(self, parent: NodeWidget, child: NodeWidget) -> None:
         """Connect ``child`` below ``parent``, replacing any previous parent of ``child``.
@@ -447,7 +441,7 @@ class TreeView(QGraphicsView):
         limit = parent.MaxChildren()
         while limit is not None and parent._children and len(parent._children) >= limit:
             self._disconnect(parent._children[0])
-        parent._link(child)
+        self.document.link(parent, child)
         item = ConnectionItem(parent, child)
         self.scene().addItem(item)
         self._connections[child] = item
@@ -471,7 +465,7 @@ class TreeView(QGraphicsView):
             if item is self._selected_connection:
                 self.select_connection(None)
             self.scene().removeItem(item)
-        parent._unlink(child)
+        self.document.unlink(child)
         self._refresh_order(parent)
         self._refresh_label_states(parent)
         self._refresh_label_states(child)
@@ -529,7 +523,7 @@ class TreeView(QGraphicsView):
             node.set_connection_state(CHILDREN, state)
 
     def _on_node_geometry(self, node: NodeWidget) -> None:
-        if node not in self._nodes:
+        if node not in self.document:
             return
         connections = self._connections
         item = connections.get(node)
@@ -572,7 +566,7 @@ class TreeView(QGraphicsView):
         if area is None:
             return []
         contents = []
-        for node in self._nodes:
+        for node in self.document.nodes():
             rect = node.scene_rect() if node is not group else None
             if rect is not None and area.contains(rect):
                 contents.append(node)
@@ -876,7 +870,7 @@ class TreeView(QGraphicsView):
 
     def _finish_note_editing(self, keep: NodeWidget | None = None) -> None:
         """End the text editing of every note except ``keep``."""
-        for node in self._nodes:
+        for node in self.document.nodes():
             if node is not keep and isinstance(node, NotesNodeWidget) and node.IsEditing():
                 node.finish_editing()
 
@@ -1136,7 +1130,7 @@ class TreeView(QGraphicsView):
         self.remove_node(node)
 
     def _is_current(self, node: NodeWidget) -> bool:
-        return node in self._nodes and shiboken6.isValid(node)
+        return node in self.document and shiboken6.isValid(node)
 
     def _select_subtree(self, node: NodeWidget) -> None:
         if self._is_current(node):

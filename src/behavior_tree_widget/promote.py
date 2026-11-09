@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Iterable
 from PySide6.QtCore import QPointF, QRectF
 
 from ._common import file_key
-from .canvas import clamp_to_scene
+from .geometry import clamp_to_scene
 from .config import TreeConfig
 from .groups import GroupNodeWidget
 from .nodes import SEQUENCE, CompositeNodeWidget, NodeWidget, RootNodeWidget, relayout
