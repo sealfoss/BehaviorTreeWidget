@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QLabel
 
 from behavior_tree_widget import ExecutionCancelled, LeafNodeWidget, NodeStatus, UnknownLeafNodeWidget
 from behavior_tree_widget.execution import result_to_status, run_in_daemon_thread
+
 from conftest import (
     Raise,
     Recorder,
@@ -308,7 +309,7 @@ class LateWriter(LeafNodeWidget):
         state.gate.wait(10)
         try:
             tree.SetEntry(42, "late")
-        except BaseException as error:  # noqa: BLE001 - reported to the test
+        except BaseException as error:
             state.errors.append(error)
             raise
         finally:
@@ -616,6 +617,8 @@ def test_empty_root_with_disconnected_nodes(qtbot, bt):
 def test_node_status_values_are_the_four_documented_strings():
     assert [status.value for status in NodeStatus] == [READY, RUNNING, SUCCEEDED, FAILED]
     assert str(NodeStatus.SUCCEEDED) == SUCCEEDED
+    assert f"{NodeStatus.FAILED}" == FAILED
+    assert NodeStatus.RUNNING == RUNNING and NodeStatus(RUNNING) is NodeStatus.RUNNING
     assert NodeStatus.from_py_trees(Status.RUNNING) is NodeStatus.RUNNING
     assert NodeStatus.from_py_trees(Status.SUCCESS) is NodeStatus.SUCCEEDED
     assert NodeStatus.from_py_trees(Status.FAILURE) is NodeStatus.FAILED
@@ -709,7 +712,7 @@ def test_on_run_receives_the_widget_and_can_use_the_blackboard(qtbot, bt, node_c
     assert leaf.trees == [bt]
     assert bt.GetEntry("output") == 42
     assert shown([root, leaf]) == [SUCCEEDED, SUCCEEDED]
-    qtbot.waitUntil(lambda: bt.blackboardView().row("output") is not None)
+    qtbot.waitUntil(lambda: bt.blackboard_view().row("output") is not None)
 
 
 # ============================================================================ errors
@@ -1288,7 +1291,7 @@ def test_blackboard_writes_by_running_nodes_do_not_mark_tree_modified(qtbot, bt,
     assert not bt.IsModified()
     bt.Execute()
     run_until_idle(qtbot, bt)
-    qtbot.waitUntil(lambda: bt.blackboardView().row("made_by_run") is not None)
+    qtbot.waitUntil(lambda: bt.blackboard_view().row("made_by_run") is not None)
     assert bt.GetEntry("x") == 2
     assert not bt.IsModified()
 

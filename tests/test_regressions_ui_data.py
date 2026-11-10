@@ -82,12 +82,13 @@ from behavior_tree_widget.serialization import (
     write_json_atomic,
 )
 
-from conftest import TEST_NODE_TYPES, SlowCancelable, fast_config, label_point, viewport_point
+from conftest import TEST_NODE_TYPES, SlowCancelable, fast_config, file_blackboard, label_point, viewport_point
 
 LEFT = Qt.MouseButton.LeftButton
 RIGHT = Qt.MouseButton.RightButton
 MIDDLE = Qt.MouseButton.MiddleButton
 NO_MOD = Qt.KeyboardModifier.NoModifier
+CTRL = Qt.KeyboardModifier.ControlModifier
 LOGGER = "behavior_tree_widget"
 
 
@@ -343,9 +344,9 @@ class Mouse:
             return window.windowHandle(), self.viewport.mapTo(window, point)
         return self.viewport, point
 
-    def press(self, point: QPoint, button=LEFT) -> None:
+    def press(self, point: QPoint, button=LEFT, modifiers=NO_MOD) -> None:
         target, pos = self._target(point)
-        QTest.mousePress(target, button, NO_MOD, pos)
+        QTest.mousePress(target, button, modifiers, pos)
 
     def move(self, point: QPoint) -> None:
         target, pos = self._target(point)
@@ -355,8 +356,8 @@ class Mouse:
         target, pos = self._target(point)
         QTest.mouseRelease(target, button, NO_MOD, pos)
 
-    def drag(self, start: QPoint, end: QPoint, steps: int = 4, button=LEFT) -> None:
-        self.press(start, button)
+    def drag(self, start: QPoint, end: QPoint, steps: int = 4, button=LEFT, modifiers=NO_MOD) -> None:
+        self.press(start, button, modifiers)
         for step in range(1, steps + 1):
             point = start + (end - start) * (step / steps)
             self.move(QPoint(round(point.x()), round(point.y())))
@@ -375,7 +376,7 @@ class EventCounter(QObject):
         self.types = set(types)
         self.count = 0
 
-    def eventFilter(self, watched, event):  # noqa: N802 (Qt API)
+    def eventFilter(self, watched, event):
         if event.type() in self.types:
             self.count += 1
         return False
@@ -517,7 +518,7 @@ def describe(widget) -> dict:
     return {
         "nodes": nodes,
         "blackboard": [(name, widget.GetEntryType(name), widget.GetEntry(name)) for name in widget.GetEntryNames()],
-        "rows": [row.name for row in widget.blackboardView().rows()],
+        "rows": [row.name for row in widget.blackboard_view().rows()],
         "file": widget.GetFilePath(),
         "modified": widget.IsModified(),
         "title": widget.window().windowTitle(),
@@ -538,7 +539,7 @@ def view_rows_in_layout(view) -> list[str]:
 def assert_view_matches_store(qtbot, bt) -> None:
     """Every entry has exactly one visible, current row, in store order; no stale rows remain."""
     qtbot.wait(20)  # let deleteLater() of retired rows run
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     names = bt.GetEntryNames()
     assert view_rows_in_layout(view) == names
     for name in names:
@@ -604,7 +605,7 @@ def test_lost_release_while_panning(qtbot, active, scenario, hover_first):
     start = empty_point(bt)
     center = view.view_center()
 
-    mouse.press(start)
+    mouse.press(start, modifiers=CTRL)
     mouse.move(start + QPoint(10, 5))
     mouse.move(start + QPoint(20, 10))
     assert_close(view.view_center() - center, QPointF(-20, -10))
@@ -673,7 +674,7 @@ def test_lost_release_while_connecting(qtbot, active, scenario, hover_first):
 @pytest.mark.parametrize("field", ["count", "ratio", "label", "enabled"])
 def test_lost_release_on_field_editor_does_not_swallow_next_click(qtbot, active, scenario, field):
     """A press on a field editor passes through to the widget; if its release is lost, the next
-    press-drag on empty space must still pan ("the next click must be handled normally")."""
+    Ctrl + drag on empty space must still pan ("the next click must be handled normally")."""
     bt = active
     view = bt.view()
     node = bt.AddNode("AllFields", 0, 200)
@@ -688,7 +689,7 @@ def test_lost_release_on_field_editor_does_not_swallow_next_click(qtbot, active,
 
     start = empty_point(bt)
     center = view.view_center()
-    mouse.drag(start, start + QPoint(40, 30))
+    mouse.drag(start, start + QPoint(40, 30), modifiers=CTRL)
     assert_close(view.view_center() - center, QPointF(-40, -30))
     assert node.GetFields() == fields
     assert view._gesture is _Gesture.IDLE
@@ -856,7 +857,7 @@ def test_window_deactivation_keeps_line_selected(qtbot, selected):
     assert ns.leaf.GetParent() is None
 
 
-def test_press_on_line_selects_it_and_dragging_from_it_pans(qtbot, active):
+def test_press_on_line_selects_it_and_dragging_from_it_selects_nodes(qtbot, active):
     bt = active
     root = bt.GetRootNode()
     leaf = bt.AddNode("Succeed", 40, 240)
@@ -869,15 +870,17 @@ def test_press_on_line_selects_it_and_dragging_from_it_pans(qtbot, active):
     assert view.hit_test(start).kind == Hit.CONNECTION
     center = view.view_center()
     leaf_pos, root_pos = QPointF(leaf._item.pos()), QPointF(root._item.pos())
+    end = view.mapFromScene(leaf._item.sceneBoundingRect().center())
 
     QTest.mousePress(view.viewport(), LEFT, NO_MOD, start)
     assert view.selected_connection() is item, "pressing on a line selects it"
     for step in range(1, 5):
-        QTest.mouseMove(view.viewport(), start + QPoint(20 * step, 10 * step))
-    QTest.mouseRelease(view.viewport(), LEFT, NO_MOD, start + QPoint(80, 40))
+        QTest.mouseMove(view.viewport(), start + (end - start) * (step / 4))
+    QTest.mouseRelease(view.viewport(), LEFT, NO_MOD, end)
 
-    assert_close(view.view_center() - center, QPointF(-80, -40))
-    assert view.selected_connection() is item and item.is_selected()
+    assert view.view_center() == center, "dragging from a line draws a selection rectangle, it does not pan"
+    assert bt.GetSelectedNodes() == [leaf]
+    assert view.selected_connection() is None and not item.is_selected()
     assert leaf._item.pos() == leaf_pos and root._item.pos() == root_pos
     assert leaf.GetParent() is root
 
@@ -967,6 +970,7 @@ def test_title_and_fields_assigned_before_super_init_are_kept_and_shown(lbt):
     assert node._fields_frame.isVisibleTo(node)
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_title_and_fields_assigned_after_super_init_are_shown(lbt):
     node = lbt.AddNode("PostInitNode", 0, 200)
     assert node.GetTitle() == "Post Title"
@@ -982,6 +986,7 @@ def test_title_and_fields_assigned_after_super_init_are_shown(lbt):
     assert node.height() > empty.height()
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 @pytest.mark.parametrize("type_name", ["PostInitEmptyNode", "PreInitEmptyNode"])
 def test_empty_fields_assigned_in_init_hide_frame_fields(lbt, type_name):
     node = lbt.AddNode(type_name, 0, 200)
@@ -990,6 +995,7 @@ def test_empty_fields_assigned_in_init_hide_frame_fields(lbt, type_name):
     assert node._editors == {}
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_editor_edits_update_instance_fields(lbt):
     node = lbt.AddNode("PostInitNode", 0, 200)
     node.field_editor("ratio").setValue(4.25)
@@ -1000,6 +1006,7 @@ def test_editor_edits_update_instance_fields(lbt):
     assert node.GetFieldSelection("items") == 3
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_path):
     pre = lbt.AddNode("PreInitNode", -200, 200)
     post = lbt.AddNode("PostInitNode", 200, 200)
@@ -1008,7 +1015,7 @@ def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_
     pre.SetFieldSelectionIndex("mode", 2)
     post.field_editor("ratio").setValue(0.75)
     post.SetTitle("Renamed Post")
-    path = str(tmp_path / "init.json")
+    path = str(tmp_path / "init_BT.json")
     assert lbt.SaveTree(path)
 
     data = read_json(path)
@@ -1034,11 +1041,12 @@ def test_init_assigned_title_and_fields_round_trip(qtbot, lbt, make_widget, tmp_
     assert lempty.GetFields() == {} and not lempty._fields_frame.isVisibleTo(lempty)
     assert not loaded.IsModified()
 
-    again = str(tmp_path / "again.json")
+    again = str(tmp_path / "again_BT.json")
     assert loaded.SaveTree(again)
     assert read_json(again)["nodes"] == data["nodes"]
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_title_and_fields_assigned_from_worker_thread_are_applied_on_gui_thread(qtbot, lbt, error_records):
     node = lbt.AddNode("NoFields", 0, 200)
     assert not node._fields_frame.isVisibleTo(node)
@@ -1131,8 +1139,7 @@ def test_dragging_on_field_name_moves_the_node(qtbot, bt):
     node = bt.AddNode("AllFields", 0, 200)
     bt.view().centerOn(node._item.sceneBoundingRect().center())
     qtbot.wait(10)
-    row = node.field_editor("count").parentWidget()
-    key_edit = row.key_edit
+    key_edit = node.field_key("count")
     assert key_edit.isReadOnly()
     start = viewport_point(bt, node, key_edit)
     assert bt.view().hit_test(start).kind == Hit.NODE
@@ -1203,7 +1210,7 @@ def test_unknown_leaf_title_marker_and_round_trip(qtbot, make_widget, tmp_path):
     assert u1.GetTypeName() == "MysteryType"
     assert u1.GetFields() == {"speed": 3, "mode": ["a", "b"]}
 
-    out = str(tmp_path / "resaved.json")
+    out = str(tmp_path / "resaved_BT.json")
     assert widget.SaveTree(out)
     data = read_json(out)
     s1, s2 = saved_node(data, "u1"), saved_node(data, "u2")
@@ -1236,7 +1243,7 @@ def test_root_titled_sequence_with_selector_type_round_trips(qtbot, bt, make_wid
     seq = bt.AddNode("Selector", 300, 0)
     seq.SetTitle("Sequence")
     assert root._title_label.text() == "Sequence (Selector)"
-    path = str(tmp_path / "root.json")
+    path = str(tmp_path / "root_BT.json")
     assert bt.SaveTree(path)
 
     loaded = make_widget()
@@ -1247,7 +1254,7 @@ def test_root_titled_sequence_with_selector_type_round_trips(qtbot, bt, make_wid
     assert lroot._title_label.text() == "Sequence (Selector)"
     lseq = node_by_id(loaded, seq.GetId())
     assert (lseq.GetCompositeType(), lseq.GetTitle()) == ("Selector", "Sequence")
-    again = str(tmp_path / "again.json")
+    again = str(tmp_path / "again_BT.json")
     assert loaded.SaveTree(again)
     assert read_json(again)["nodes"] == read_json(path)["nodes"]
 
@@ -1314,7 +1321,7 @@ def test_type_name_is_not_inherited(qtbot, lbt, tmp_path, make_widget):
     assert type(base) is BaseNamed and base.GetTypeName() == "PublicBaseName"
     assert lbt.GetNodeType("DerivedNamed") is DerivedNamed
     assert lbt.GetNodeType("PublicBaseName") is BaseNamed
-    path = str(tmp_path / "names.json")
+    path = str(tmp_path / "names_BT.json")
     assert lbt.SaveTree(path)
     data = read_json(path)
     assert saved_node(data, derived.GetId())["type"] == "DerivedNamed"
@@ -1404,7 +1411,7 @@ def test_set_config_clamps_tick_interval(bt, interval, expected):
 @pytest.mark.parametrize("window_modified", [False, True])
 def test_window_title_escapes_qt_placeholder(qtbot, bt, tmp_path, filename, shown, window_modified):
     bt.setWindowModified(window_modified)
-    bt._file_path = str(tmp_path / filename)  # '*' is not allowed in Windows file names
+    bt._document.path = str(tmp_path / filename)  # '*' is not allowed in Windows file names
     bt._update_window_title()
     qtbot.wait(5)
     assert bt.windowHandle() is not None
@@ -1447,20 +1454,20 @@ def self_referencing_list() -> list:
 def test_save_skips_self_referencing_list_entry(qtbot, bt, dialogs, tmp_path):
     bt.SetEntry(self_referencing_list(), "loop")
     bt.SetEntry(5, "fine")
-    path = str(tmp_path / "loop.json")
+    path = str(tmp_path / "loop_BT.json")
     # programmatic: saved, the value is skipped
     assert bt.SaveTree(path) is True
-    names = [entry["name"] for entry in read_json(path)["blackboard"]]
+    names = [entry["name"] for entry in file_blackboard(path)]
     assert names == ["fine"]
     # interactive: no exception escapes; a warning names the skipped entry
-    dialogs.save_path = str(tmp_path / "loop2.json")
+    dialogs.save_path = str(tmp_path / "loop2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
     assert "critical" not in dialogs.kinds()
     warnings = [args for kind, args in dialogs.shown if kind == "warning"]
     assert len(warnings) == 1 and "loop" in warnings[0][2]
-    assert [entry["name"] for entry in read_json(tmp_path / "loop2.json")["blackboard"]] == ["fine"]
+    assert [entry["name"] for entry in read_json(tmp_path / "loop2_BB.json")["blackboard"]] == ["fine"]
     assert bt.GetFilePath() == os.path.abspath(dialogs.save_path)
 
 
@@ -1468,7 +1475,7 @@ def test_save_skips_self_referencing_list_field(qtbot, bt, dialogs, tmp_path):
     node = bt.AddNode("NoFields", 0, 200)
     node.SetField("loop", self_referencing_list())
     node.SetField("ok", 3)
-    path = str(tmp_path / "field_loop.json")
+    path = str(tmp_path / "field_loop_BT.json")
     assert bt.SaveTree(path)
     assert saved_node(read_json(path), node.GetId())["fields"] == {"ok": 3}
     dialogs.save_path = path
@@ -1486,10 +1493,11 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
     node = bt.AddNode("AllFields", 0, 200)
     node.SetField("label", text_field)
     node.SetTitle("title \udc80")
-    path = str(tmp_path / "surrogates.json")
+    path = str(tmp_path / "surrogates_BT.json")
     assert bt.SaveTree(path)
-    with open(path, "rb") as stream:
-        stream.read().decode("utf-8")  # the file is valid UTF-8
+    for name in ("surrogates_BT.json", "surrogates_BB.json"):
+        with open(tmp_path / name, "rb") as stream:
+            stream.read().decode("utf-8")  # the tree file and the blackboard file are valid UTF-8
 
     loaded = make_widget()
     assert loaded.LoadTree(path)
@@ -1499,12 +1507,12 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
     assert lnode.GetTitle() == "title \udc80"
 
     # interactive save works as well
-    dialogs.save_path = str(tmp_path / "surrogates2.json")
+    dialogs.save_path = str(tmp_path / "surrogates2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
     assert "critical" not in dialogs.kinds()
-    assert read_json(dialogs.save_path)["blackboard"][0]["value"] == text_entry
+    assert read_json(tmp_path / "surrogates2_BB.json")["blackboard"][0]["value"] == text_entry
 
 
 @pytest.mark.parametrize(
@@ -1515,14 +1523,14 @@ def test_lone_surrogate_strings_save_and_load_back(qtbot, bt, make_widget, dialo
 def test_save_with_uncopyable_field_value(qtbot, bt, dialogs, tmp_path, value_factory):
     node = bt.AddNode("AllFields", 0, 200)
     node.SetField("handle", value_factory())
-    path = str(tmp_path / "uncopyable.json")
+    path = str(tmp_path / "uncopyable_BT.json")
     # programmatic: documented to skip values that cannot be written
     assert bt.SaveTree(path) is True
     fields = saved_node(read_json(path), node.GetId())["fields"]
     assert "handle" not in fields
     assert fields["count"] == 3 and fields["label"] == "hello"
     # interactive: no exception escapes, a warning lists the field
-    dialogs.save_path = str(tmp_path / "uncopyable2.json")
+    dialogs.save_path = str(tmp_path / "uncopyable2_BT.json")
     with capture_exceptions() as exceptions:
         bt.button("Save").click()
     assert exceptions == []
@@ -1532,6 +1540,7 @@ def test_save_with_uncopyable_field_value(qtbot, bt, dialogs, tmp_path, value_fa
     assert os.path.exists(dialogs.save_path)
 
 
+@pytest.mark.filterwarnings("ignore:assigning self:DeprecationWarning")  # checks the deprecated assignment
 def test_node_data_that_cannot_be_read_is_reported_not_raised(qtbot, lbt, dialogs, tmp_path, monkeypatch):
     node = lbt.AddNode("PostInitNode", 0, 200)
 
@@ -1539,7 +1548,7 @@ def test_node_data_that_cannot_be_read_is_reported_not_raised(qtbot, lbt, dialog
         raise RuntimeError("no data today")
 
     monkeypatch.setattr(PostInitNode, "_to_dict", broken)
-    dialogs.save_path = str(tmp_path / "broken.json")
+    dialogs.save_path = str(tmp_path / "broken_BT.json")
     with capture_exceptions() as exceptions:
         lbt.button("Save").click()
     assert exceptions == []
@@ -1559,7 +1568,7 @@ def test_save_errors_raise_programmatically_and_show_critical_interactively(bt, 
         bt.button("Save").click()
     assert exceptions == []
     assert dialogs.kinds()[-1] == "critical"
-    assert bt.GetFilePath() == str(tmp_path / "tree.json")
+    assert bt.GetFilePath() == str(tmp_path / "tree_BT.json")
 
 
 @pytest.mark.parametrize("bad", ["missing_dir", "nul"])
@@ -1579,7 +1588,7 @@ def test_new_tree_errors_raise_programmatically_and_show_critical_interactively(
 def test_confirm_discard_changes_save_failure_shows_critical(bt, dialogs, tmp_path):
     bt.AddNode("Succeed", 0, 200)
     assert bt.IsModified()
-    bt._file_path = str(tmp_path / "gone" / "tree.json")
+    bt._document.path = str(tmp_path / "gone" / "tree.json")
     dialogs.question_answer = QMessageBox.StandardButton.Save
     dialogs.save_path = str(tmp_path / "other.json")
     with capture_exceptions() as exceptions:
@@ -1619,7 +1628,7 @@ def test_set_entry_with_uncopyable_container_creates_object_entry(qtbot, bt, fac
     bt.SetEntry(value, "locks")
     assert bt.GetEntryType("locks") == "Object"
     assert bt.GetEntry("locks") is value
-    row = bt.blackboardView().row("locks")
+    row = bt.blackboard_view().row("locks")
     assert row is not None and row.type_name == "Object"
     assert row.value_widget.isReadOnly()
 
@@ -1638,7 +1647,7 @@ def test_list_of_locks_object_entry_is_skipped_when_saving(bt, dialogs, tmp_path
     bt.SetEntry("x", "text")
     dialogs.save_path = str(tmp_path / "locks.json")
     bt.button("Save").click()
-    assert [entry["name"] for entry in read_json(dialogs.save_path)["blackboard"]] == ["text"]
+    assert [entry["name"] for entry in read_json(tmp_path / "locks_BB.json")["blackboard"]] == ["text"]
     # Object entries are run-time values: silently not saved (no warning on every save).
     assert "warning" not in dialogs.kinds()
 
@@ -1647,8 +1656,8 @@ def test_dispose_clears_rows_and_later_writes_raise(qtbot, bt):
     for index, name in enumerate(["a", "b", "c"]):
         bt.SetEntry(index, name)
     bt.SetEntry([1, 2], "items")
-    view = bt.blackboardView()
-    store = bt.blackboardStore()
+    view = bt.blackboard_view()
+    store = bt.blackboard_store()
     removed = []
     store.entryRemoved.connect(removed.append)
     bt.setCurrentIndex(1)
@@ -1671,7 +1680,7 @@ def test_dispose_clears_rows_and_later_writes_raise(qtbot, bt):
         "rename": lambda: store.rename("a", "z"),
         "replace": lambda: store.replace("a", "String", "s"),
     }
-    for label, write in writes.items():
+    for write in writes.values():
         with pytest.raises(RuntimeError):
             write()
     with pytest.raises(KeyError):
@@ -1684,7 +1693,7 @@ def test_shutdown_disposes_and_view_is_cleared(qtbot, bt):
     ns = bt.GetBlackboardNamespace()
     bt.Shutdown()
     qtbot.wait(20)
-    assert bt.blackboardView().rows() == []
+    assert bt.blackboard_view().rows() == []
     assert not [key for key in py_trees.blackboard.Blackboard.storage if key.startswith(ns + "/")]
     with pytest.raises(RuntimeError):
         bt.SetEntry(2, "a")
@@ -1697,7 +1706,7 @@ def _focus_uncommitted_rename(qtbot, bt, name="x"):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    row = bt.blackboardView().row(name)
+    row = bt.blackboard_view().row(name)
     row.name_edit.setFocus()
     qtbot.waitUntil(row.name_edit.hasFocus, timeout=1000)
     row.name_edit.selectAll()
@@ -1713,10 +1722,10 @@ def _worker(action):
 
 
 CHANGES_WHILE_RENAMING = {
-    "retype_gui": lambda bt: bt.blackboardStore().replace("x", "String", "hello"),
+    "retype_gui": lambda bt: bt.blackboard_store().replace("x", "String", "hello"),
     "remove_gui": lambda bt: bt.RemoveEntry("x"),
     "remove_then_set_gui": lambda bt: (bt.RemoveEntry("x"), bt.SetEntry("hello", "x")),
-    "retype_worker": lambda bt: _worker(lambda: bt.blackboardStore().replace("x", "Bool", True)),
+    "retype_worker": lambda bt: _worker(lambda: bt.blackboard_store().replace("x", "Bool", True)),
     "remove_worker": lambda bt: _worker(lambda: bt.RemoveEntry("x")),
     "remove_then_set_worker": lambda bt: _worker(lambda: (bt.RemoveEntry("x"), bt.SetEntry("hello", "x"))),
 }
@@ -1741,7 +1750,7 @@ def test_entry_changed_while_its_name_editor_has_uncommitted_text(qtbot, bt, err
         bt.RemoveEntry("x")
         bt.SetEntry(3.5, "x")
     assert_view_matches_store(qtbot, bt)
-    row = bt.blackboardView().row("x")
+    row = bt.blackboard_view().row("x")
     assert row.isVisible()
     QToolTip.hideText()
 
@@ -1785,7 +1794,7 @@ def _when(condition, action):
 def test_entry_removed_while_edit_dialog_is_open(qtbot, bt, dialogs, error_records, remover, outcome):
     bt.AddEntry("items", "List", [1, 2])
     bt.setCurrentIndex(1)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     row = view.row("items")
     info = {}
     keep = []
@@ -1825,12 +1834,12 @@ def test_entry_removed_while_edit_dialog_is_open(qtbot, bt, dialogs, error_recor
 def test_entry_retyped_while_edit_dialog_is_open(qtbot, bt, dialogs, error_records):
     bt.AddEntry("items", "List", [1, 2])
     bt.setCurrentIndex(1)
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     keep = []
 
     def handler(dialog):
         def during():
-            bt.blackboardStore().replace("items", "String", "now a string")
+            bt.blackboard_store().replace("items", "String", "now a string")
 
             def finish():
                 dialog.text_edit.setText("[7, 8]")
@@ -1864,7 +1873,7 @@ def test_entry_retyped_while_edit_dialog_is_open(qtbot, bt, dialogs, error_recor
 def test_edit_dialog_accepts_nan_and_inf(qtbot, bt, dialogs, type_name, text, check):
     bt.AddEntry("values", type_name)
     bt.setCurrentIndex(1)
-    row = bt.blackboardView().row("values")
+    row = bt.blackboard_view().row("values")
     result = {}
 
     def handler(dialog):
@@ -1902,7 +1911,7 @@ def test_typing_into_double_entry_spin_box_is_not_reformatted(qtbot, bt):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    spin = bt.blackboardView().row("d").value_widget
+    spin = bt.blackboard_view().row("d").value_widget
     assert isinstance(spin, QDoubleSpinBox)
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus, timeout=1000)
@@ -1923,7 +1932,7 @@ def test_typing_into_integer_entry_spin_box(qtbot, bt):
     bt.setCurrentIndex(1)
     bt.activateWindow()
     qtbot.waitUntil(bt.isActiveWindow, timeout=2000)
-    spin = bt.blackboardView().row("i").value_widget
+    spin = bt.blackboard_view().row("i").value_widget
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus, timeout=1000)
     spin.selectAll()
@@ -1933,7 +1942,7 @@ def test_typing_into_integer_entry_spin_box(qtbot, bt):
 
 def test_value_set_from_code_still_updates_spin_box(qtbot, bt):
     bt.AddEntry("d", "Double", 0.0)
-    spin = bt.blackboardView().row("d").value_widget
+    spin = bt.blackboard_view().row("d").value_widget
     bt.SetEntry(3.25, "d")
     assert spin.value() == 3.25
     _worker(lambda: bt.SetEntry(-1.5, "d"))
@@ -1943,8 +1952,8 @@ def test_value_set_from_code_still_updates_spin_box(qtbot, bt):
 def test_restore_keeps_snapshot_order_in_the_view(qtbot, bt):
     for index, name in enumerate(["a", "b", "c"]):
         bt.SetEntry(index, name)
-    store = bt.blackboardStore()
-    view = bt.blackboardView()
+    store = bt.blackboard_store()
+    view = bt.blackboard_view()
     snapshot = store.snapshot()
     store.remove("a")
     bt.SetEntry(10, "a")
@@ -1977,11 +1986,11 @@ def test_reset_restores_blackboard_order_after_run_once(qtbot, lbt):
     lbt.Reset()
     assert lbt.GetEntryNames() == ["a", "b", "c"]
     assert [lbt.GetEntry(n) for n in "abc"] == [0, 1, 2]
-    assert view_rows_in_layout(lbt.blackboardView()) == ["a", "b", "c"]
+    assert view_rows_in_layout(lbt.blackboard_view()) == ["a", "b", "c"]
 
 
 def test_store_changed_signal_runtime_flag(qtbot, bt, executing):
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     flags = []
     store.changed.connect(flags.append)
     bt.SetEntry(1, "while_running")
@@ -2003,7 +2012,7 @@ def test_parse_list_validates_without_changing_and_reports_duplicates(bt):
         {"name": "b", "type": "Nope", "value": 1},
         {"name": "c", "type": "Double", "value": 1.5},
     ]
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     entries, problems = store.parse_list(items)
     assert entries == [("a", "Integer", 5), ("c", "Double", 1.5)]
     assert len(problems) == 2
@@ -2016,7 +2025,7 @@ def test_load_list_replace_keeps_object_entries(bt):
     bt.SetEntry(handle, "handle")
     bt.SetEntry(1, "old")
     bt.SetEntry(2, "kept")
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     problems = store.load_list([{"name": "kept", "type": "Integer", "value": 20}, {"name": "new", "type": "String", "value": "n"}], replace=True)
     assert problems == []
     assert bt.GetEntryNames() == ["handle", "kept", "new"]
@@ -2293,7 +2302,7 @@ def test_new_tree_during_a_tick_never_leaves_a_partial_tree(qtbot, lbt, dialogs,
     assert error is None or isinstance(error, (TreeFileError, OSError)), repr(error)
     _assert_whole_tree(
         lbt, previous_ids,
-        lambda w: len(w.GetNodes()) == 1 and w.GetFilePath() == os.path.abspath(fresh),
+        lambda w: len(w.GetNodes()) == 1 and w.GetFilePath() == os.path.abspath(str(tmp_path / "fresh_BT.json")),
     )
 
 
@@ -2372,12 +2381,11 @@ def test_widget_deleted_right_after_show_and_load_raises_nothing(qtbot, view_fil
 
 # ============================================================================ Widget: close / destroy
 def test_close_top_level_widget_stops_but_does_not_shut_down(qtbot, bt, dialogs, executing):
-    ns = executing
     dialogs.question_answer = QMessageBox.StandardButton.Discard
     assert bt.close()
     assert not bt.IsExecuting()
     assert SlowCancelable.cancelled.wait(2)
-    assert not bt.blackboardStore().is_disposed()
+    assert not bt.blackboard_store().is_disposed()
     bt.SetEntry(1, "still_writable")
     bt.show()
     qtbot.waitExposed(bt)
@@ -2403,7 +2411,7 @@ def test_close_with_delete_on_close_shuts_down(qtbot, tmp_path, dialogs):
     slow = widget.AddNode("SlowCancelable", 0, 200)
     widget.Connect(widget.GetRootNode(), slow)
     widget.SetEntry(1, "a")
-    store = widget.blackboardStore()
+    store = widget.blackboard_store()
     ns = widget.GetBlackboardNamespace()
     fast_config(widget)
     widget.Execute()
@@ -2437,7 +2445,7 @@ def _destroy_without_shutdown(qtbot, tmp_path, with_entries: bool):
         widget.SetEntry(1, "a")
         widget.SetEntry([1, 2], "items")
     ns = widget.GetBlackboardNamespace()
-    client_name = widget.blackboardStore().client().unique_identifier
+    client_name = widget.blackboard_store().client().unique_identifier
     fast_config(widget)
     widget.Execute()
     qtbot.waitUntil(lambda: slow.GetStatus() is NodeStatus.RUNNING, timeout=3000)

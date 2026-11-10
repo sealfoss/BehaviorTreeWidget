@@ -1,13 +1,18 @@
 """Node widgets shown in the behavior tree view.
 
-Four kinds of nodes exist:
+The nodes of the behavior tree:
 
 * :class:`RootNodeWidget` - the single root of a tree, a Sequence or a Selector
   without a parent.
 * :class:`CompositeNodeWidget` - a Sequence or Selector with a parent and children.
 * :class:`NegationNodeWidget` - a parent of exactly one child whose result it inverts.
-* :class:`LeafNodeWidget` - the base class for user defined nodes. Subclasses
-  override :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
+* :class:`LeafNodeWidget` - the base class of leaf nodes: the built-in ones (in
+  :mod:`.blackboard_nodes`, :mod:`.control_nodes`, :mod:`.network_nodes`, :mod:`.print_node`
+  and :mod:`.subtree`) and the application's own, which override
+  :meth:`LeafNodeWidget.OnRun` and may declare editable ``_fields``.
+
+Notes and Groups (:mod:`.notes`, :mod:`.groups`, both :class:`~.notes.BoxNodeWidget`) are
+nodes of the view that are not part of the tree: they have no connections and never run.
 
 Example::
 
@@ -22,6 +27,7 @@ Example::
 
 from __future__ import annotations
 
+import bisect
 import copy
 import functools
 import inspect
@@ -30,26 +36,28 @@ import os
 import sys
 import threading
 import uuid
+import warnings
 import weakref
-from enum import Enum
-from typing import TYPE_CHECKING, Any
+from enum import Enum, StrEnum
+from operator import itemgetter
+from typing import TYPE_CHECKING, Any, cast, override
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QAbstractScrollArea,
     QAbstractSlider,
     QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
-    QListView,
     QPlainTextEdit,
     QSizePolicy,
     QSpinBox,
@@ -58,26 +66,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ._common import INT_MAX, INT_MIN
+from ._qt import set_text_quietly
 from ._runctx import check_not_cancelled, current_token
 from ._ui import load_ui
 
 if TYPE_CHECKING:  # pragma: no cover
+    from concurrent.futures import Future
+
+    from ._runctx import RunToken
+    from .canvas import TreeView
+    from .items import NodeItem
     from .widget import BehaviorTreeWidget
 
 log = logging.getLogger("behavior_tree_widget")
 
 __all__ = [
-    "NodeStatus",
-    "ConnectionState",
-    "NodeWidget",
-    "CompositeNodeWidget",
-    "RootNodeWidget",
-    "NegationNodeWidget",
-    "LeafNodeWidget",
-    "UnknownLeafNodeWidget",
-    "SEQUENCE",
-    "SELECTOR",
     "NEGATION",
+    "SELECTOR",
+    "SEQUENCE",
+    "CompositeNodeWidget",
+    "ConnectionState",
+    "LeafNodeWidget",
+    "NegationNodeWidget",
+    "NodeStatus",
+    "NodeWidget",
+    "RootNodeWidget",
+    "UnknownLeafNodeWidget",
 ]
 
 SEQUENCE = "Sequence"
@@ -85,25 +100,18 @@ SELECTOR = "Selector"
 COMPOSITE_TYPES = (SEQUENCE, SELECTOR)
 NEGATION = "Negation"
 
-INT_MIN = -(2**31)
-INT_MAX = 2**31 - 1
-
-
-class NodeStatus(str, Enum):
-    """Execution state displayed by a node's Status label."""
+class NodeStatus(StrEnum):
+    """Execution state displayed by a node's Status label (``str()`` gives the text shown)."""
 
     READY = "Ready"
     RUNNING = "Running"
     SUCCEEDED = "Succeeded"
     FAILED = "Failed"
 
-    def __str__(self) -> str:
-        return self.value
-
     @classmethod
-    def from_py_trees(cls, status) -> "NodeStatus":
+    def from_py_trees(cls, status) -> NodeStatus:
         """Map a ``py_trees.common.Status`` to a :class:`NodeStatus`."""
-        name = getattr(status, "name", None)
+        name = getattr(status, "name", "")
         return {
             "RUNNING": cls.RUNNING,
             "SUCCESS": cls.SUCCEEDED,
@@ -148,13 +156,34 @@ def _status_style(status: NodeStatus) -> str:
     return f"QLabel {{ color: {STATUS_COLORS[status]}; font-weight: {weight}; }}"
 
 
+_status_widths: dict[str, int] = {}  # {font key: width of the widest status text in bold}
+
+
+def _fit_every_status(label: QLabel) -> None:
+    """Give the Status label room for every status text, so the node keeps its size (and its
+    centre, which orders it among its siblings) when its status changes."""
+    font = label.font()
+    width = _status_widths.get(font.key())
+    if width is None:
+        bold = QFont(font)
+        bold.setBold(True)
+        metrics = QFontMetrics(bold)
+        width = max(max(metrics.horizontalAdvance(s.value), metrics.boundingRect(s.value).width()) for s in NodeStatus)
+        _status_widths[font.key()] = width
+    margins = label.contentsMargins()
+    label.setMinimumWidth(
+        max(label.minimumWidth(), width + margins.left() + margins.right() + 2 * label.margin() + label.indent() + 1)
+    )
+
+
 class _WheelGuard(QObject):
     """Stops spin boxes / combo boxes from grabbing wheel events unless they have focus.
 
     Without this, scrolling the tree view over a node would change field values.
     """
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt API)
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Wheel and isinstance(watched, QWidget) and not watched.hasFocus():
             event.ignore()
             return True
@@ -233,12 +262,27 @@ class NodeWidget(QWidget):
         _title: Default title shown in the Title label.
         _fields: Template of the editable fields (leaf nodes only). It is deep copied
             for each node instance.
+
+    A subclass may also assign ``self._title`` / ``self._fields`` in its ``__init__`` before
+    calling ``super().__init__()``: those are the node's initial title and fields. Afterwards
+    use :meth:`SetTitle` and :meth:`SetFields`; assigning the attributes after construction
+    still works but is deprecated.
     """
 
     UI_FILE: str = ""
     TYPE_NAME: str | None = None
     _title: str | None = None
     _fields: dict = {}
+
+    # Defaults of instance attributes that hooks may read before the constructors set them
+    # (a hook overridden by a subclass can run while a base class is being constructed).
+    _node_ready = False  # True once NodeWidget.__init__ has finished
+    _removed = False  # True once removed from a tree view, which deletes the node
+    _tree_ref: weakref.ReferenceType[BehaviorTreeWidget] | None = None  # the BehaviorTreeWidget (see _tree)
+    _canvas: TreeView | None = None  # the view showing the node, while it is in one
+    _item: NodeItem | None = None  # the scene item embedding this widget, while it is in a view
+    _detached_order: tuple[float, float] | None = None  # orders a node that is not in a view (sub-tree nodes)
+    _subtree_place: tuple[str, ...] | None = None  # ids of the Sub-Tree nodes leading to a sub-tree node, and its own
 
     statusChanged = Signal(str)
     titleChanged = Signal(str)
@@ -263,12 +307,21 @@ class NodeWidget(QWidget):
             template = type(self)._fields
             self._fields = copy.deepcopy(template) if isinstance(template, dict) else {}
         self._field_selections: dict[str, int] = {}
+        self._edited_selections: set[str] = set()  # list fields whose selection was changed after loading
         self._parent: NodeWidget | None = None
         self._children: list[NodeWidget] = []
+        # GetChildren() cache: the children in execution order and their order keys, worked out
+        # for _children as it was then (_order_basis); None: work it out at the next call.
+        self._order_nodes: list[NodeWidget] | None = None
+        self._order_keys: list[tuple[float, float]] = []
+        self._order_basis: tuple[NodeWidget, ...] = ()
+        # Counts the changes that can change the order (links, moved children): an order worked out
+        # outside the lock (GetChildren on another thread) is kept only if none happened meanwhile.
+        self._order_version = 0
         self._status = NodeStatus.READY
         self._error: str | None = None
-        self._run_token = None  # _runctx.RunToken of the current / last run
-        self._worker_future = None  # Future of the last OnRun call started on a worker thread
+        self._run_token: RunToken | None = None  # of the current / last run
+        self._worker_future: Future | None = None  # of the last OnRun call started on a worker thread
         self._tree_ref = None  # weak reference to the BehaviorTreeWidget (see _tree)
         self._canvas = None  # canvas.TreeView, set when the node is added to a view
         self._item = None  # canvas.NodeItem embedding this widget
@@ -286,7 +339,9 @@ class NodeWidget(QWidget):
         self._title_label: QLabel = self._require_child(QLabel, "Title")
         self._title_label.setContentsMargins(4, 1, 4, 1)  # keep the box frame off the text
         self._status_label: QLabel = self._require_child(QLabel, "Status")
-        self._parent_label: QLabel | None = self._find_child(QLabel, "ParentConnection") if self.HasParentConnection() else None
+        self._parent_label: QLabel | None = (
+            self._find_child(QLabel, "ParentConnection") if self.HasParentConnection() else None
+        )
         self._children_label: QLabel | None = None
         if self.HasChildConnections():
             self._children_label = self._find_child(QLabel, "ChildConnections") or self._find_child(
@@ -306,40 +361,61 @@ class NodeWidget(QWidget):
             if label is not None:
                 label.setCursor(Qt.CursorShape.CrossCursor)
 
+        _fit_every_status(self._status_label)
         self._refresh_title()
         self._refresh_status()
         self.set_connection_state(PARENT, ConnectionState.DISCONNECTED)
         self.set_connection_state(CHILDREN, ConnectionState.DISCONNECTED)
         self._node_ready = True
 
+    @override
     def __setattr__(self, name: str, value: Any) -> None:
-        # Assigning _title / _fields (e.g. in a subclass __init__) updates the node's ui.
-        if name in ("_title", "_fields") and self.__dict__.get("_node_ready", False):
+        # Deprecated: assigning _title / _fields after construction updates the node, as
+        # SetTitle / SetFields do. Values assigned before NodeWidget.__init__ are initial values.
+        if name in ("_title", "_fields") and self._node_ready:
+            warnings.warn(
+                f"assigning self.{name} after the node was constructed is deprecated; "
+                f"use {'SetTitle' if name == '_title' else 'SetFields'}() instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             check_not_cancelled(f"assigning self.{name}")
-            runtime = self._is_runtime_change()
             if name == "_title":
-                self._apply_title(value, runtime)
-                return
-            super().__setattr__(name, value)
-            self._call_in_gui_thread(self._on_fields_replaced, runtime)
+                self._apply_title(value)
+            else:
+                self._replace_fields(value)
             return
         super().__setattr__(name, value)
 
     @property
     def _tree(self) -> BehaviorTreeWidget | None:
         """The owning BehaviorTreeWidget (held weakly to avoid reference cycles)."""
-        ref = self.__dict__.get("_tree_ref")
+        ref = self._tree_ref
         return ref() if ref is not None else None
 
     @_tree.setter
     def _tree(self, tree: BehaviorTreeWidget | None) -> None:
-        self.__dict__["_tree_ref"] = weakref.ref(tree) if tree is not None else None
+        self._tree_ref = weakref.ref(tree) if tree is not None else None
 
-    def _apply_title(self, title: Any, runtime: bool) -> None:
-        """Store a new title (None -> default title, others -> str) and update the label."""
+    def _apply_title(self, title: Any, runtime: bool | None = None) -> None:
+        """Store a new title (None -> default title, others -> str) and update the label (any thread).
+
+        ``runtime``: whether this is a run-time change; by default decided by the calling thread
+        and the execution state (see :meth:`_is_runtime_change`).
+        """
         title = self._default_title() if title is None else str(title)
-        super().__setattr__("_title", title)
+        if runtime is None:
+            runtime = self._is_runtime_change()
+        super().__setattr__("_title", title)  # not the deprecated assignment hook
         self._call_in_gui_thread(self._on_title_changed, runtime)
+
+    def _replace_fields(self, fields: Any, runtime: bool | None = None) -> None:
+        """Replace all fields (anything but a dict gives no fields) and rebuild their editors (any thread)."""
+        if runtime is None:
+            runtime = self._is_runtime_change()
+        with self._lock:
+            super().__setattr__("_fields", fields if isinstance(fields, dict) else {})
+        self._call_in_gui_thread(self._on_fields_replaced, runtime)
 
     # ------------------------------------------------------------------ ui helpers
     def _default_title(self) -> str:
@@ -406,7 +482,7 @@ class NodeWidget(QWidget):
             function()
         except RuntimeError:  # widget deleted while the call was queued
             log.debug("queued node update skipped", exc_info=True)
-        except Exception:  # noqa: BLE001 - never let an update escape the Qt slot
+        except Exception:
             log.exception("%s: queued update failed", self)
 
     def _is_runtime_change(self) -> bool:
@@ -438,14 +514,14 @@ class NodeWidget(QWidget):
 
     def GetTitle(self) -> str:
         with self._lock:
-            return self._title
+            return cast(str, self._title)  # a str once constructed (None only as a class default)
 
     def SetTitle(self, title: str) -> None:
         """Change the title shown on the node (thread-safe)."""
         check_not_cancelled("SetTitle")
         title = str(title)
         if title != self._title:
-            self._apply_title(title, self._is_runtime_change())
+            self._apply_title(title)
 
     def _on_title_changed(self, runtime: bool = False) -> None:
         self._refresh_title()
@@ -453,10 +529,22 @@ class NodeWidget(QWidget):
         self.changed.emit(runtime)
         self._notify_geometry()
 
+    def SetFields(self, fields: dict) -> None:
+        """Replace all fields of the node and rebuild their editors (thread-safe).
+
+        ``fields`` maps field names to values, like the class attribute ``_fields``; the node
+        keeps a copy of the dict. The selections of list fields that are still lists are kept.
+
+        Raises:
+            TypeError: ``fields`` is not a dict.
+        """
+        check_not_cancelled("SetFields")
+        if not isinstance(fields, dict):
+            raise TypeError(f"fields must be a dict, not {type(fields).__name__}")
+        self._replace_fields(dict(fields))
+
     def _on_fields_replaced(self, runtime: bool = False) -> None:
         with self._lock:
-            if not isinstance(self._fields, dict):
-                super().__setattr__("_fields", {})
             for key in list(self._field_selections):
                 if not isinstance(self._fields.get(key), list):
                     del self._field_selections[key]
@@ -544,12 +632,50 @@ class NodeWidget(QWidget):
     def GetChildren(self) -> list[NodeWidget]:
         """Children in execution order: left to right as shown in the view (ties: top first)."""
         with self._lock:
-            children = list(self._children)
-        return sorted(children, key=lambda node: node._order_key())
+            basis = tuple(self._children)
+            if self._order_nodes is not None and basis == self._order_basis:
+                return list(self._order_nodes)
+            version = self._order_version
+        # Stable: children at exactly the same place keep the order in which they were connected.
+        keyed = sorted(((child._order_key(), child) for child in basis), key=itemgetter(0))
+        nodes = [child for _, child in keyed]
+        with self._lock:
+            if self._order_version == version and tuple(self._children) == basis:
+                self._order_nodes, self._order_keys, self._order_basis = nodes, [key for key, _ in keyed], basis
+        return list(nodes)
+
+    def _child_moved(self, child: NodeWidget) -> tuple[int, int] | None:
+        """Keep the cached order of the children (see :meth:`GetChildren`) after ``child`` moved or
+        changed its size (GUI thread; the view calls it for every such change).
+
+        Returns ``(old index, new index)`` of ``child``, or None when the order is worked out
+        again at the next :meth:`GetChildren` (it was not cached, or ``child`` now lies at exactly
+        the same place as a sibling: the full sort then keeps the order of the connections).
+        """
+        with self._lock:
+            self._order_version += 1
+            nodes = self._order_nodes
+            if nodes is None or tuple(self._children) != self._order_basis or child not in self._order_basis:
+                self._order_nodes = None
+                return None
+            old = nodes.index(child)
+            keys = self._order_keys
+            key = child._order_key()
+            if key == keys[old]:
+                return old, old
+            del nodes[old], keys[old]
+            new = bisect.bisect_left(keys, key)
+            if (new < len(keys) and keys[new] == key) or (new > 0 and keys[new - 1] == key):
+                self._order_nodes = None
+                return None
+            nodes.insert(new, child)
+            keys.insert(new, key)
+            return old, new
 
     def _order_key(self) -> tuple[float, float]:
         if self._item is None:
-            return (0.0, 0.0)
+            # Nodes of a sub-tree are not in a view: their saved position orders them.
+            return self._detached_order or (0.0, 0.0)
         rect = self._item.sceneBoundingRect()
         return (rect.center().x(), rect.top())
 
@@ -574,6 +700,32 @@ class NodeWidget(QWidget):
         if self._canvas is None:
             raise RuntimeError("the node has not been added to a BehaviorTreeWidget")
         return self._canvas
+
+    def _link(self, child: NodeWidget) -> None:
+        """Make ``child`` the last child of this node (GUI thread; the caller checked that the
+        connection is allowed and that ``child`` has no parent)."""
+        with self._lock:
+            self._children.append(child)
+            self._order_nodes = None
+            self._order_version += 1
+        with child._lock:
+            child._parent = self
+
+    def _unlink(self, child: NodeWidget) -> None:
+        """Remove ``child`` from the children of this node (GUI thread)."""
+        with self._lock:
+            if child in self._children:
+                self._children.remove(child)
+                self._order_nodes = None
+                self._order_version += 1
+        with child._lock:
+            if child._parent is self:
+                child._parent = None
+
+    def scene_rect(self) -> QRectF | None:
+        """The node's rectangle in scene coordinates (None while it is not in a view)."""
+        item = self._item
+        return item.sceneBoundingRect() if item is not None else None
 
     def GetTree(self) -> BehaviorTreeWidget | None:
         """The BehaviorTreeWidget this node belongs to."""
@@ -642,9 +794,7 @@ class NodeWidget(QWidget):
             if not 0 <= index < len(value):
                 raise IndexError(f"index {index} out of range for field {key!r}")
             self._field_selections[key] = index
-            edited = self.__dict__.get("_edited_selections")
-            if edited is not None:
-                edited.add(key)
+            self._edited_selections.add(key)
         self._call_in_gui_thread(self._on_field_set, key, runtime)
 
     # ------------------------------------------------------------------ execution hooks
@@ -667,6 +817,7 @@ class NodeWidget(QWidget):
     def _load_dict(self, data: dict) -> None:
         """Restore data written by :meth:`_to_dict`."""
 
+    @override
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.GetTitle()!r} {self._id[:8]}>"
 
@@ -693,13 +844,16 @@ class CompositeNodeWidget(NodeWidget):
         self._memory = bool(memory)
         super().__init__(parent)
 
+    @override
     def _default_title(self) -> str:
         return self._composite_type
 
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return True
 
+    @override
     def GetTypeName(self) -> str:
         return self._composite_type
 
@@ -715,10 +869,10 @@ class CompositeNodeWidget(NodeWidget):
             return
         old = self._composite_type
         self._composite_type = composite_type
-        if self._title == old:
-            self._title = composite_type  # __setattr__ refreshes the label and emits changed
+        if self.GetTitle() == old:
+            self._apply_title(composite_type)  # a title that names the type follows it
         else:
-            self._on_title_changed(self._is_runtime_change())
+            self._on_title_changed(self._is_runtime_change())  # the type shown after the title changed
 
     def GetMemory(self) -> bool:
         return self._memory
@@ -732,18 +886,22 @@ class CompositeNodeWidget(NodeWidget):
         self._refresh_title()
         self.changed.emit(self._is_runtime_change())
 
+    @override
     def DisplayTitle(self) -> str:
         title = self.GetTitle()
         if title == self._composite_type:
             return title
         return f"{title} ({self._composite_type})"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{self._composite_type} - memory {'on' if self._memory else 'off'}"
 
+    @override
     def _to_dict(self) -> dict:
         return {"memory": self._memory}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         if isinstance(data.get("memory"), bool):
             self.SetMemory(data["memory"])
@@ -758,19 +916,24 @@ class RootNodeWidget(CompositeNodeWidget):
     def __init__(self, composite_type: str = SEQUENCE, memory: bool = True, parent: QWidget | None = None):
         super().__init__(composite_type, memory, parent)
 
+    @override
     def _default_title(self) -> str:
         return "Root"
 
     @classmethod
+    @override
     def HasParentConnection(cls) -> bool:
         return False
 
+    @override
     def GetTypeName(self) -> str:
         return "Root"
 
+    @override
     def _to_dict(self) -> dict:
         return {"composite": self._composite_type, "memory": self._memory}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         if data.get("composite") in COMPOSITE_TYPES:
             self.SetCompositeType(data["composite"])
@@ -790,13 +953,16 @@ class NegationNodeWidget(NodeWidget):
     _title = NEGATION
 
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return True
 
     @classmethod
+    @override
     def MaxChildren(cls) -> int | None:
         return 1
 
+    @override
     def GetTypeName(self) -> str:
         return NEGATION
 
@@ -805,36 +971,27 @@ class NegationNodeWidget(NodeWidget):
         children = self.GetChildren()
         return children[0] if children else None
 
+    @override
     def DisplayTitle(self) -> str:
         title = self.GetTitle()
         return title if title == NEGATION else f"{title} ({NEGATION})"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{NEGATION} - succeeds when its child fails and fails when its child succeeds"
 
 
-class _FieldRow(QWidget):
-    """One row of the Fields list: a read-only key QLineEdit and a value editor."""
-
-    def __init__(self, key: str, editor: QWidget, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName(f"FieldRow_{key}")
-        self.key_edit = QLineEdit(key, self)
-        self.key_edit.setObjectName("FieldKey")
-        self.key_edit.setReadOnly(True)
-        self.key_edit.setToolTip(key)
-        self.key_edit.setCursorPosition(0)
-        self.key_edit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.key_edit.setProperty("btDragArea", True)  # dragging on a field name moves the node
-        self.editor = editor
-        editor.setParent(self)
-        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.key_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 1, 2, 1)
-        layout.setSpacing(4)
-        layout.addWidget(self.key_edit, 1)
-        layout.addWidget(editor, 1)
+def _field_key_box(key: str) -> QLineEdit:
+    """The read-only box showing the name of a field, left of its editor."""
+    box = QLineEdit(key)
+    box.setObjectName("FieldKey")
+    box.setReadOnly(True)
+    box.setToolTip(key)
+    box.setCursorPosition(0)
+    box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    box.setProperty("btDragArea", True)  # dragging on a field name moves the node
+    box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return box
 
 
 class LeafNodeWidget(NodeWidget):
@@ -860,28 +1017,57 @@ class LeafNodeWidget(NodeWidget):
     THREAD_WAIT: float = 0.02
     FLOAT_DECIMALS: int = 6
 
+    # Until __init__ sets them (field hooks can run while a base class is being constructed).
+    _fields_frame: QFrame | None = None
+    _fields_layout: QGridLayout | None = None
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._fields_frame: QFrame | None = self._find_child(QFrame, "FrameFields")
-        self._fields_view: QListView | None = self._find_child(QListView, "Fields")
         self._editors: dict[str, QWidget] = {}
         self._editor_kinds: dict[str, str] = {}
-        self._edited_selections: set = set()  # list fields whose selection was changed after loading
-        self._fields_model: QStandardItemModel | None = None
-        if self._fields_view is not None:
-            view = self._fields_view
-            view.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-            view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            view.setUniformItemSizes(False)
-            view.setSpacing(0)
-            view.setProperty("btDragArea", True)
-            view.viewport().setProperty("btDragArea", True)
+        self._keys: dict[str, QLineEdit] = {}
+        # The field rows: a grid of name boxes (column 0) and editors (column 1) in the widget "Fields".
+        container = self._fields_container()
+        if container is not None:
+            container.setProperty("btDragArea", True)
+            layout = QGridLayout(container)
+            layout.setContentsMargins(2, 1, 2, 1)
+            layout.setHorizontalSpacing(4)
+            layout.setVerticalSpacing(2)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 1)
+            self._fields_layout = layout
         self._rebuild_fields()
 
+    def _fields_container(self) -> QWidget | None:
+        """The widget named ``Fields`` that holds the field rows, or None.
+
+        A custom .ui file written for an earlier version may hold a QListView named ``Fields``
+        (or a container that has a layout already): a plain container takes its place.
+        """
+        fields = self._find_child(QWidget, "Fields")
+        if fields is None or (fields.layout() is None and not isinstance(fields, QAbstractScrollArea)):
+            return fields
+        container = QWidget()
+        container.setObjectName("Fields")
+        container.setSizePolicy(fields.sizePolicy())
+        if isinstance(fields, QAbstractScrollArea):
+            parent = fields.parentWidget()
+            layout = parent.layout() if parent is not None else None
+            if layout is None or layout.replaceWidget(fields, container) is None:
+                container.deleteLater()
+                return None
+            fields.setObjectName("")  # findChild must not find it before it is deleted
+            fields.hide()
+            fields.deleteLater()
+        else:
+            container.setObjectName("FieldRows")
+            fields.layout().addWidget(container)
+        return container
+
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return False
 
@@ -914,105 +1100,91 @@ class LeafNodeWidget(NodeWidget):
         """
 
     # ------------------------------------------------------------------ fields ui
+    @override
     def _refresh_all_fields(self) -> None:
-        if "_editors" in self.__dict__:
-            self._rebuild_fields()
+        self._rebuild_fields()
 
     def _rebuild_fields(self) -> None:
-        if self._fields_view is None or self._fields_frame is None:
+        """Show one row per field: its name and an editor that matches the type of its value."""
+        layout = self._fields_layout
+        if layout is None or self._fields_frame is None:
             return
-        view = self._fields_view
-        old_model = self._fields_model
-        old_editors = list(self._editors.values())
+        for widget in [*self._keys.values(), *self._editors.values()]:
+            if shiboken6.isValid(widget):
+                layout.removeWidget(widget)
+                widget.hide()
+                widget.deleteLater()
+        self._keys.clear()
         self._editors.clear()
         self._editor_kinds.clear()
-        for editor in old_editors:
-            if shiboken6.isValid(editor):
-                editor.deleteLater()
-
         with self._lock:
             items = list(self._fields.items())
-        model = QStandardItemModel(view)
-        view.setModel(model)
-        self._fields_model = model
-        if old_model is not None:
-            old_model.deleteLater()
-
-        rows: list[_FieldRow] = []
-        editors: dict = {}
-        kinds: dict = {}
-        for key, value in items:
-            item = QStandardItem()
-            item.setEditable(False)
-            item.setSelectable(False)
-            model.appendRow(item)
-            row = _FieldRow(str(key), self._create_editor(key, value))
-            editors[key] = row.editor
-            kinds[key] = field_kind(value)
-            rows.append(row)
-
-        total_height = 0
-        max_width = 0
-        for index, row in enumerate(rows):
-            hint = row.sizeHint()
-            model.item(index).setSizeHint(QSize(hint.width(), hint.height()))
-            view.setIndexWidget(model.index(index, 0), row)
-            total_height += hint.height()
-            max_width = max(max_width, hint.width())
-        # Only editors of installed rows are kept (a failure above leaves no dangling editors).
-        self._editors.update(editors)
-        self._editor_kinds.update(kinds)
-
-        if rows:
-            frame = 2 * view.frameWidth()
-            view.setFixedHeight(total_height + frame)
-            view.setMinimumWidth(max_width + frame)
-            self._fields_frame.show()
-        else:
-            self._fields_frame.hide()
+        # Every widget is made before any is installed: a failure leaves no half-built rows.
+        rows = [
+            (key, _field_key_box(str(key)), self._create_editor(key, value), field_kind(value)) for key, value in items
+        ]
+        for row, (key, key_box, editor, kind) in enumerate(rows):
+            editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            layout.addWidget(key_box, row, 0)
+            layout.addWidget(editor, row, 1)
+            # Shown now: in a visible node, Qt would show them from the event loop, after the layout
+            # below has measured the rows without them.
+            key_box.show()
+            editor.show()
+            self._keys[key] = key_box
+            self._editors[key] = editor
+            self._editor_kinds[key] = kind
+        self._fields_frame.setVisible(bool(rows))
         self._notify_geometry()
 
     def _create_editor(self, key: str, value: Any) -> QWidget:
         kind = field_kind(value)
+        editor: QWidget
         if kind == "bool":
-            editor = QCheckBox()
-            editor.setChecked(value)
-            editor.toggled.connect(functools.partial(self._on_editor_value, key))
+            check_box = QCheckBox()
+            check_box.setChecked(value)
+            check_box.toggled.connect(functools.partial(self._on_editor_value, key))
+            editor = check_box
         elif kind == "int":
-            editor = QSpinBox()
-            editor.setRange(INT_MIN, INT_MAX)
-            editor.setValue(min(max(value, INT_MIN), INT_MAX))
-            editor.valueChanged.connect(functools.partial(self._on_editor_value, key))
-            _guard_wheel(editor)
+            spin_box = QSpinBox()
+            spin_box.setRange(INT_MIN, INT_MAX)
+            spin_box.setValue(min(max(value, INT_MIN), INT_MAX))
+            spin_box.valueChanged.connect(functools.partial(self._on_editor_value, key))
+            _guard_wheel(spin_box)
+            editor = spin_box
         elif kind == "float":
-            editor = QDoubleSpinBox()
-            editor.setDecimals(self.FLOAT_DECIMALS)
-            editor.setRange(-sys.float_info.max, sys.float_info.max)
-            editor.setSingleStep(0.1)
-            editor.setValue(value)
-            editor.valueChanged.connect(functools.partial(self._on_editor_value, key))
-            _guard_wheel(editor)
+            double_box = QDoubleSpinBox()
+            double_box.setDecimals(self.FLOAT_DECIMALS)
+            double_box.setRange(-sys.float_info.max, sys.float_info.max)
+            double_box.setSingleStep(0.1)
+            double_box.setValue(value)
+            double_box.valueChanged.connect(functools.partial(self._on_editor_value, key))
+            _guard_wheel(double_box)
+            editor = double_box
         elif kind == "str":
-            editor = QLineEdit()
-            editor.setText(value)
-            editor.setCursorPosition(0)
-            editor.textChanged.connect(functools.partial(self._on_editor_value, key))
+            line_edit = QLineEdit()
+            line_edit.setText(value)
+            line_edit.setCursorPosition(0)
+            line_edit.textChanged.connect(functools.partial(self._on_editor_value, key))
+            editor = line_edit
         elif kind == "list":
-            editor = QComboBox()
-            editor.addItems([_item_text(item) for item in value])
+            combo_box = QComboBox()
+            combo_box.addItems([_item_text(item) for item in value])
             with self._lock:
                 index = self._field_selections.setdefault(key, 0)
             if value:
-                editor.setCurrentIndex(min(max(index, 0), len(value) - 1))
-            editor.currentIndexChanged.connect(functools.partial(self._on_editor_selection, key))
-            _guard_wheel(editor)
+                combo_box.setCurrentIndex(min(max(index, 0), len(value) - 1))
+            combo_box.currentIndexChanged.connect(functools.partial(self._on_editor_selection, key))
+            _guard_wheel(combo_box)
+            editor = combo_box
         else:
-            editor = QLineEdit()
-            editor.setText(_display_repr(value))
-            editor.setCursorPosition(0)
-            editor.setReadOnly(True)
-            editor.setEnabled(False)
-            editor.setToolTip(f"Fields of type {type(value).__name__} cannot be edited")
+            read_only = QLineEdit()
+            read_only.setText(_display_repr(value))
+            read_only.setCursorPosition(0)
+            read_only.setReadOnly(True)
+            read_only.setEnabled(False)
+            read_only.setToolTip(f"Fields of type {type(value).__name__} cannot be edited")
+            editor = read_only
         editor.setObjectName(f"Field_{key}")
         if kind != "other":
             editor.setToolTip(str(key))
@@ -1035,6 +1207,7 @@ class LeafNodeWidget(NodeWidget):
         self.fieldEdited.emit(key)
         self.changed.emit(False)
 
+    @override
     def _refresh_field_editor(self, key: str) -> None:
         with self._lock:
             value = self._fields.get(key, _MISSING)
@@ -1043,8 +1216,7 @@ class LeafNodeWidget(NodeWidget):
         if value is _MISSING or editor is None or self._editor_kinds.get(key) != field_kind(value):
             self._rebuild_fields()
             return
-        editor.blockSignals(True)
-        try:
+        with QSignalBlocker(editor):
             if isinstance(editor, QCheckBox):
                 editor.setChecked(bool(value))
             elif isinstance(editor, QSpinBox):
@@ -1062,21 +1234,21 @@ class LeafNodeWidget(NodeWidget):
                 if items:
                     editor.setCurrentIndex(min(max(selection, 0), len(items) - 1))
             elif isinstance(editor, QLineEdit) and not editor.isReadOnly():
-                if editor.text() != value:
-                    editor.setText(value)
-                    if not editor.hasFocus():
-                        editor.setCursorPosition(0)  # show the start of long text
-            else:
+                set_text_quietly(editor, value)
+            elif isinstance(editor, QLineEdit):  # the read-only editor of a value of another type
                 editor.setText(_display_repr(value))
                 editor.setCursorPosition(0)
-        finally:
-            editor.blockSignals(False)
 
     def field_editor(self, key: str) -> QWidget | None:
         """The editor widget displaying field ``key`` (for tests and customisation)."""
         return self._editors.get(key)
 
+    def field_key(self, key: str) -> QLineEdit | None:
+        """The read-only box showing the name of field ``key`` (for tests and customisation)."""
+        return self._keys.get(key)
+
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         with self._lock:
             fields = dict(self._fields)
@@ -1090,6 +1262,7 @@ class LeafNodeWidget(NodeWidget):
             data["field_selections"] = selections
         return data
 
+    @override
     def _load_dict(self, data: dict) -> None:
         """Apply saved field values over the class defaults.
 
@@ -1140,34 +1313,43 @@ class UnknownLeafNodeWidget(LeafNodeWidget):
         self._raw_selections: dict = {}  # saved field_selections (kept as saved)
         super().__init__(parent)
 
+    @override
     def _default_title(self) -> str:
         return self._unknown_type
 
+    @override
     def GetTypeName(self) -> str:
         return self._unknown_type
 
+    @override
     def DisplayTitle(self) -> str:
         return f"{self.GetTitle()} (unknown type)"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"Node type {self._unknown_type!r} is not registered with this BehaviorTreeWidget (unknown type)"
 
+    @override
     def OnRun(self, tree):
         raise RuntimeError(f"node type {self._unknown_type!r} is not registered")
 
+    @override
     def _load_dict(self, data: dict) -> None:
         saved = data.get("fields")
         selections = data.get("field_selections")
         self._raw_selections = dict(selections) if isinstance(selections, dict) else {}
         with self._lock:
             self._field_selections = (
-                {key: index for key, index in selections.items() if isinstance(index, int) and not isinstance(index, bool)}
+                {
+                    key: index
+                    for key, index in selections.items()
+                    if isinstance(index, int) and not isinstance(index, bool)
+                }
                 if isinstance(selections, dict)
                 else {}
             )
-        # Assigning _fields rebuilds the editors (see NodeWidget.__setattr__). The loader passes
-        # freshly decoded values, so no deep copy (which fails on deeply nested sets).
-        self._fields = dict(saved) if isinstance(saved, dict) else {}
+        # The loader passes freshly decoded values, so no deep copy (which fails on deeply nested sets).
+        self._replace_fields(dict(saved) if isinstance(saved, dict) else {})
 
 
 INTERACTIVE_WIDGET_TYPES = (

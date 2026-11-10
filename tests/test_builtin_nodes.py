@@ -205,7 +205,7 @@ def test_negation_menu_has_rename_and_delete_but_no_composite_options(bt, dialog
     negation = bt.AddNode("Negation", 0, 200)
     menu = bt.view().build_node_menu(negation)
     names = [action.objectName() for action in menu.actions() if not action.isSeparator()]
-    assert names == ["Rename", "Delete"]
+    assert names == ["Rename", "SelectChildren", "Delete"]
     menu.deleteLater()
 
 
@@ -301,7 +301,7 @@ def test_negation_is_saved_and_loaded(make_widget, bt, tmp_path):
     leaf = bt.AddNode(FailNode, 40, 420)
     bt.Connect(bt.GetRootNode(), negation)
     bt.Connect(negation, leaf)
-    path = tmp_path / "negation.json"
+    path = tmp_path / "negation_BT.json"
     assert bt.SaveTree(str(path))
     saved = {node["id"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
     assert saved[negation.GetId()]["type"] == "Negation"
@@ -323,7 +323,7 @@ def test_loading_a_negation_with_two_children_keeps_the_first(make_widget, bt, t
     first = bt.AddNode(Succeed, -100, 400)
     second = bt.AddNode(FailNode, 100, 400)
     bt.Connect(negation, first)
-    path = tmp_path / "two.json"
+    path = tmp_path / "two_BT.json"
     assert bt.SaveTree(str(path))
     data = json.loads(path.read_text(encoding="utf-8"))
     data["connections"].append({"parent": negation.GetId(), "child": second.GetId()})  # hand-edited file
@@ -571,8 +571,8 @@ def test_renaming_an_entry_updates_the_nodes(bt):
     node.SetValueName("i")
     node.SetCompareTo("i2")
     bt._set_modified(False)
-    bt.blackboardStore().rename("i", "count")
-    bt.blackboardStore().rename("i2", "limit")
+    bt.blackboard_store().rename("i", "count")
+    bt.blackboard_store().rename("i2", "limit")
     assert node.GetValueName() == "count" and node.GetCompareTo() == "limit"
     assert combo(node, "ValueName").currentText() == "count"
     assert combo(node, "CompareTo").currentText() == "limit"
@@ -583,7 +583,7 @@ def test_renaming_an_entry_in_the_blackboard_tab_updates_the_nodes(bt):
     add_entries(bt, ["i"])
     node = bt.AddNode("Evaluation", 0, 200)
     node.SetValueName("i")
-    row = bt.blackboardView().row("i")
+    row = bt.blackboard_view().row("i")
     row.name_edit.setText("renamed")
     row.name_edit.editingFinished.emit()
     assert node.GetValueName() == "renamed"
@@ -615,6 +615,21 @@ def test_values_equal_does_not_mix_bools_and_numbers():
     assert not values_equal(True, 1)
     assert not values_equal(0, False)
     assert values_equal(False, False)
+
+
+@pytest.mark.parametrize(
+    "a, b",
+    [([True], [1]), ([1, 0], [True, False]), ((False,), (0,)), ({"k": True}, {"k": 1}), ({True}, {1}), ([[1]], [[True]])],
+)
+def test_values_equal_does_not_mix_bools_and_numbers_in_containers(a, b):
+    assert not values_equal(a, b)
+    assert not values_equal(b, a)
+
+
+def test_values_equal_compares_numbers_in_containers_by_value():
+    assert values_equal([1, 2.0], [1.0, 2])
+    assert values_equal({"k": [1]}, {"k": [1.0]})
+    assert not values_equal([1, 2], (1, 2))
 
 
 # ============================================================================ Evaluation / Set: API
@@ -792,7 +807,7 @@ def test_blackboard_nodes_are_saved_and_loaded(make_widget, bt, tmp_path):
     setter = bt.AddNode("Set", 200, 200)
     setter.SetValueName("i")
     setter.SetCompareTo("i2")
-    path = tmp_path / "bb.json"
+    path = tmp_path / "bb_BT.json"
     assert bt.SaveTree(str(path))
     saved = {node["id"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
     assert saved[evaluation.GetId()]["type"] == "Evaluation"
@@ -818,7 +833,7 @@ def test_blackboard_nodes_are_saved_and_loaded(make_widget, bt, tmp_path):
 
 def test_invalid_saved_values_are_ignored(make_widget, bt, tmp_path, caplog):
     node = bt.AddNode("Evaluation", 0, 200)
-    path = tmp_path / "bad.json"
+    path = tmp_path / "bad_BT.json"
     assert bt.SaveTree(str(path))
     data = json.loads(path.read_text(encoding="utf-8"))
     for item in data["nodes"]:

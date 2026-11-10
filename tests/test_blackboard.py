@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import threading
 
 import py_trees
@@ -50,9 +49,22 @@ from behavior_tree_widget.blackboard import (
     container_items,
     infer_type,
     parse_container_text,
+    safe_repr,
 )
 
-from conftest import fast_config, run_until_idle
+from conftest import assert_blackboard_in_file, fast_config, run_until_idle
+from support.round3 import (
+    LOGGER,
+    node_entry,
+    read_json,
+    record,
+    rows_in_layout,
+    warning_texts,
+    warnings_logged,
+    write_tree,
+)
+from support.round4 import BrokenRepr
+from support.round5 import BrokenRepr as R5BrokenRepr
 
 USER_TYPES = ["Integer", "Double", "String", "Bool", "List", "Dictionary", "Set"]
 ALL_TYPES = USER_TYPES + ["Object"]
@@ -92,8 +104,8 @@ def store(qapp):
 @pytest.fixture
 def view(bt):
     """The BlackboardView of the ``bt`` widget, made the current tab."""
-    bt.setCurrentIndex(bt.indexOf(bt.blackboardView()))
-    return bt.blackboardView()
+    bt.setCurrentIndex(bt.indexOf(bt.blackboard_view()))
+    return bt.blackboard_view()
 
 
 def storage_keys(namespace: str) -> set[str]:
@@ -467,7 +479,7 @@ def test_duplicate_names_are_rejected(store):
 
 @pytest.mark.parametrize("name", CLIENT_ATTRIBUTE_NAMES)
 def test_names_colliding_with_py_trees_client_attributes(bt, name):
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     client = store.client()
     bt.SetEntry(1, name)
     assert bt.HasEntry(name)
@@ -495,7 +507,7 @@ def test_unicode_and_space_names(bt, view, name):
     bt.SetEntry(3.5, name)
     assert bt.GetEntry(name) == 3.5
     assert bt.GetEntryType(name) == "Double"
-    assert Blackboard.storage[bt.blackboardStore().key(name)] == 3.5
+    assert Blackboard.storage[bt.blackboard_store().key(name)] == 3.5
     row = view.row(name)
     assert row is not None
     assert row.name_edit.text() == name
@@ -693,7 +705,7 @@ def test_get_entry_returns_copies_of_containers(bt, value):
     else:
         first.add(99)
     assert bt.GetEntry("container") == value
-    assert Blackboard.storage[bt.blackboardStore().key("container")] == value
+    assert Blackboard.storage[bt.blackboard_store().key("container")] == value
 
 
 def test_set_entry_copies_the_given_container(bt):
@@ -945,11 +957,11 @@ def test_two_widgets_do_not_share_entries(make_widget):
     assert second.GetEntryType("shared_name") == "String"
     assert not second.HasEntry("only_first")
     assert second.GetEntryNames() == ["shared_name"]
-    assert first.blackboardView().row("only_first") is not None
-    assert second.blackboardView().row("only_first") is None
+    assert first.blackboard_view().row("only_first") is not None
+    assert second.blackboard_view().row("only_first") is None
     first.Shutdown()
     assert second.GetEntry("shared_name") == "two"
-    assert Blackboard.storage[second.blackboardStore().key("shared_name")] == "two"
+    assert Blackboard.storage[second.blackboard_store().key("shared_name")] == "two"
 
 
 # ============================================================================ widget-level API
@@ -969,7 +981,7 @@ def test_widget_blackboard_api(bt):
     assert bt.HasEntry("greeting") and not bt.HasEntry("missing")
     bt.RemoveEntry("ratio")
     assert bt.GetEntryNames() == ["count", "flags", "thing", "greeting"]
-    assert bt.GetBlackboardNamespace() == bt.blackboardStore().namespace()
+    assert bt.GetBlackboardNamespace() == bt.blackboard_store().namespace()
 
 
 def test_widget_blackboard_api_errors(bt):
@@ -1141,7 +1153,7 @@ def test_node_writes_from_worker_thread_during_execution(qtbot, bt, view, tmp_pa
         run_until_idle(qtbot, bt)
         assert bt.GetEntry("runs") == run
         qtbot.waitUntil(
-            lambda: view.row("created_by_node") is not None
+            lambda run=run: view.row("created_by_node") is not None
             and view.row("created_by_node").value_widget.text() == f"run {run}"
             and view.row("runs").value_widget.value() == run,
             timeout=5000,
@@ -1156,7 +1168,7 @@ def test_node_writes_from_worker_thread_during_execution(qtbot, bt, view, tmp_pa
 def test_worker_thread_rename_and_retype_update_view(qtbot, bt, view):
     bt.AddEntry("first", "Integer", 1)
     bt.AddEntry("second", "Integer", 2)
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
 
     def work(_index):
         store.rename("first", "renamed")
@@ -1171,7 +1183,7 @@ def test_worker_thread_rename_and_retype_update_view(qtbot, bt, view):
 
 # ============================================================================ BlackboardView structure
 def test_blackboard_tab_contains_the_view(bt):
-    view = bt.blackboardView()
+    view = bt.blackboard_view()
     index = bt.indexOf(view)
     assert index >= 0
     assert bt.tabText(index) == "Blackboard"
@@ -1219,9 +1231,9 @@ def test_rows_appear_in_store_order(bt, view):
     for name in ["zeta", "alpha", "mid"]:
         bt.SetEntry(1, name)
     assert layout_names(view) == ["zeta", "alpha", "mid"]
-    bt.blackboardStore().rename("alpha", "beta")
+    bt.blackboard_store().rename("alpha", "beta")
     assert layout_names(view) == ["zeta", "beta", "mid"]
-    bt.blackboardStore().replace("zeta", "String", "now text")
+    bt.blackboard_store().replace("zeta", "String", "now text")
     assert layout_names(view) == ["zeta", "beta", "mid"]
     assert isinstance(view.row("zeta").value_widget, QLineEdit)
     bt.RemoveEntry("beta")
@@ -1274,7 +1286,7 @@ def test_add_entry_button_adds_every_type(bt, view, dialogs, tmp_path, type_name
     row = view.row("new_entry")
     assert row is not None and row.type_name == type_name
     assert layout_names(view) == ["new_entry"]
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 @pytest.mark.parametrize("type_name", USER_TYPES)
@@ -1449,9 +1461,9 @@ def test_remove_entries_removes_only_selected(bt, view, tmp_path):
     assert row_names(view) == ["a", "c"] and layout_names(view) == ["a", "c"]
     assert not any(row.is_selected() for row in view.rows())
     assert not view.select_all.isChecked()
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     assert storage_keys(store.namespace()) == {store.key("a"), store.key("c")}
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_remove_entries_after_select_all_removes_everything(bt, view):
@@ -1474,7 +1486,7 @@ def test_remove_entries_with_nothing_selected_is_a_no_op(bt, view, tmp_path):
 def test_retype_keeps_row_selection(bt, view):
     _make_rows(bt)
     view.row("b").select_box.click()
-    bt.blackboardStore().replace("b", "Bool", True)
+    bt.blackboard_store().replace("b", "Bool", True)
     row = view.row("b")
     assert row.type_name == "Bool"
     assert row.is_selected()
@@ -1499,7 +1511,7 @@ def test_editing_value_widgets_updates_store_immediately(bt, view, tmp_path, typ
     value = bt.GetEntry("entry")
     assert value == expected and type(value) is type(expected)
     assert bt.GetEntryType("entry") == type_name
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_typing_into_integer_and_string_rows(qtbot, bt, view):
@@ -1566,7 +1578,7 @@ def test_entry_edited_signal_only_for_ui_edits(bt, view, dialogs):
     view.entryEdited.connect(edited.append)
     bt.SetEntry(1, "code")
     bt.SetEntry(2, "code")
-    bt.blackboardStore().rename("code", "code2")
+    bt.blackboard_store().rename("code", "code2")
     assert edited == []
     view.row("code2").value_widget.setValue(5)
     assert edited == ["code2"]
@@ -1580,7 +1592,7 @@ def test_rename_via_value_name(qtbot, bt, view, tmp_path):
     bt.AddEntry("old", "List", [1, 2])
     bt.AddEntry("c", "Integer", 3)
     mark_saved(bt, tmp_path)
-    store = bt.blackboardStore()
+    store = bt.blackboard_store()
     old_key = store.key("old")
     row = view.row("old")
     row.name_edit.selectAll()
@@ -1595,7 +1607,7 @@ def test_rename_via_value_name(qtbot, bt, view, tmp_path):
     assert view.row("new name") is row and view.row("old") is None
     assert row.name == "new name" and row.name_edit.text() == "new name"
     assert layout_names(view) == ["a", "new name", "c"]
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 def test_rename_via_value_name_strips_spaces(bt, view):
@@ -1650,7 +1662,7 @@ def test_container_edit_button_changes_value(bt, view, dialogs, tmp_path, type_n
     assert bt.GetEntryType("box") == type_name
     combo = row.value_widget
     assert [combo.itemText(i) for i in range(combo.count())] == items
-    assert bt.IsModified()
+    assert_blackboard_in_file(bt)  # written to the tree file at once, not left unsaved
 
 
 @pytest.mark.parametrize(
@@ -1709,7 +1721,7 @@ def test_container_edit_dialog_cancel_keeps_value(bt, view, dialogs, tmp_path):
 
 
 @pytest.mark.parametrize("action", ["add", "remove", "rename", "edit_value", "edit_container"])
-def test_ui_edits_mark_tree_modified(bt, view, dialogs, tmp_path, action):
+def test_ui_edits_are_written_to_the_tree_file(bt, view, dialogs, tmp_path, action):
     bt.AddEntry("number", "Integer", 1)
     bt.AddEntry("items", "List", [1])
     mark_saved(bt, tmp_path)
@@ -1735,8 +1747,8 @@ def test_ui_edits_mark_tree_modified(bt, view, dialogs, tmp_path, action):
 
         dialogs.dialog_handler = handler
         view.row("items").edit_button.click()
-    assert bt.IsModified()
-    assert modified_signals == [True]
+    assert_blackboard_in_file(bt)
+    assert modified_signals == []
 
 
 def test_selection_changes_do_not_mark_tree_modified(bt, view, tmp_path):
@@ -1745,3 +1757,236 @@ def test_selection_changes_do_not_mark_tree_modified(bt, view, tmp_path):
     view.select_all.click()
     view.row("a").select_box.click()
     assert not bt.IsModified()
+
+
+# ============================================================================ Object entries / names / order
+def test_object_entries_are_never_saved_and_cause_no_warning(qtbot, bt, dialogs, tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    bt.AddEntry("n", "Integer", 1)
+    marker = object()
+    bt.SetEntry(marker, "obj")
+    bt.SetEntry(2**40, "big")  # too large for an Integer entry: stored as Object
+    bt.AddEntry("explicit", "Object", [1, 2])  # encodable, but still a run-time Object entry
+    assert [bt.GetEntryType(name) for name in ("obj", "big", "explicit")] == ["Object"] * 3
+    path = tmp_path / "saved.json"
+    dialogs.save_path = str(path)
+    caplog.clear()
+    bt.button("Save").click()
+    assert dialogs.kinds() == ["save_dialog"], "saving Object entries must not show a warning"
+    assert read_json(tmp_path / "saved_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert "blackboard" not in read_json(tmp_path / "saved_BT.json")
+    assert warnings_logged(caplog) == []
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG and r.name.startswith(LOGGER)]
+    assert any("'obj'" in message for message in debug), "skipping an Object entry is logged at debug level"
+    assert bt.SaveTree(str(tmp_path / "programmatic.json"))
+    assert read_json(tmp_path / "programmatic_BB.json")["blackboard"] == [{"name": "n", "type": "Integer", "value": 1}]
+    assert warnings_logged(caplog) == []
+    assert not bt.IsModified()
+    # kept by New / Load, with their run-time values
+    assert bt.NewTree(str(tmp_path / "fresh.json"))
+    assert bt.GetEntryNames() == ["obj", "big", "explicit"]
+    assert bt.GetEntry("obj") is marker
+    assert bt.LoadTree(str(path))
+    assert bt.GetEntryNames() == ["n", "obj", "big", "explicit"]
+    assert bt.GetEntry("obj") is marker
+
+def test_invalid_entry_names_in_files_are_skipped(qtbot, make_widget, dialogs, tmp_path, caplog):
+    invalid = ["", "   ", " lead", "trail ", "a.b", "a/b", 5, None]
+    items = [{"name": name, "type": "Integer", "value": index} for index, name in enumerate(invalid)]
+    items += [{"name": "good", "type": "Integer", "value": 1}, {"name": "also good", "type": "String", "value": "x"}]
+    items.append({"type": "Integer", "value": 3})  # no name at all
+    path = write_tree(tmp_path / "names.json", [node_entry("r", "Root")], blackboard=items)
+    entries, problems = BlackboardStore.parse_list(items)
+    assert [name for name, _, _ in entries] == ["good", "also good"]
+    assert len(problems) == len(invalid) + 1
+    widget = make_widget()
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert widget.LoadTree(path), "invalid entry names must never fail a load"
+    assert widget.GetEntryNames() == ["good", "also good"]
+    assert len([m for m in warnings_logged(caplog) if "blackboard entry" in m]) == len(invalid) + 1
+    other = make_widget()
+    dialogs.open_path = path
+    other.button("Load").click()
+    texts = warning_texts(dialogs)
+    assert len(texts) == 1 and texts[0].count("- blackboard entry") == len(invalid) + 1
+    assert other.GetEntryNames() == ["good", "also good"]
+
+@pytest.mark.parametrize(
+    "name,valid",
+    [("x", True), ("with space", True), ("ünï", True), ("", False), ("  ", False), (" x", False),
+     ("x ", False), ("a.b", False), ("a/b", False), (5, False), (None, False)],
+)
+def test_check_name_format(name, valid):
+    if valid:
+        assert BlackboardStore.check_name_format(name) == name
+    else:
+        with pytest.raises((ValueError, TypeError)):
+            BlackboardStore.check_name_format(name)
+
+def test_load_order_follows_the_file(qtbot, bt, tmp_path):
+    marker = object()
+    bt.AddEntry("c", "Integer", 1)
+    bt.SetEntry(marker, "obj")
+    bt.AddEntry("a", "String", "old")
+    bt.AddEntry("zz", "Integer", 9)
+    path = write_tree(
+        tmp_path / "order.json",
+        [node_entry("r", "Root")],
+        blackboard=[
+            {"name": "b", "type": "Integer", "value": 2},
+            {"name": "a", "type": "Integer", "value": 1},
+            {"name": "c", "type": "String", "value": "three"},
+        ],
+    )
+    assert bt.LoadTree(path)
+    assert bt.GetEntryNames() == ["b", "a", "c", "obj"]
+    assert bt.blackboard_store().items()[:3] == [("b", "Integer", 2), ("a", "Integer", 1), ("c", "String", "three")]
+    qtbot.wait(20)
+    assert rows_in_layout(bt.blackboard_view()) == ["b", "a", "c", "obj"]
+    assert [row.name for row in bt.blackboard_view().rows()] == ["b", "a", "c", "obj"]
+
+def test_store_reorder_and_dispose_notify(qapp):
+    store = BlackboardStore()
+    reordered = record(store.entriesReordered)
+    for name in ("a", "b", "c"):
+        store.add(name, "Integer", 1)
+    store.reorder(["c", "missing", "a"])
+    assert store.names() == ["c", "a", "b"]
+    assert len(reordered) == 1
+    store.reorder(["c", "a"])
+    assert len(reordered) == 1, "no signal when the order does not change"
+    removed = record(store.entryRemoved)
+    store.dispose(notify=False)
+    assert removed == [] and store.is_disposed()
+    with pytest.raises(RuntimeError):
+        store.add("d", "Integer", 1)
+    with pytest.raises(RuntimeError):
+        store.set("a", 2)
+
+    other = BlackboardStore()
+    for name in ("x", "y"):
+        other.add(name, "String", name)
+    removed = record(other.entryRemoved)
+    other.dispose(notify=True)
+    assert removed == ["x", "y"]
+    other.dispose(notify=True)
+    assert removed == ["x", "y"], "dispose is idempotent"
+    store.deleteLater()
+    other.deleteLater()
+
+
+# ============================================================================ data edge cases
+def test_object_entry_with_broken_repr_still_gets_a_row(widget):
+    widget.SetEntry(BrokenRepr(), "broken")
+    row = widget.blackboard_view().row("broken")
+    assert row is not None
+    assert "BrokenRepr" in row.value_widget.text()
+
+
+# ============================================================================ display robustness
+def test_containers_with_broken_repr_still_get_rows(widget):
+    widget.SetEntry([R5BrokenRepr()], "items")
+    widget.SetEntry({"k": R5BrokenRepr()}, "mapping")
+    for name in ("items", "mapping"):
+        assert widget.blackboard_view().row(name) is not None
+
+def test_set_with_broken_repr_is_skipped_when_saving(widget, tmp_path):
+    widget.SetEntry({R5BrokenRepr()}, "bad_set")
+    widget.SetEntry(1, "good")
+    path = str(tmp_path / "s.json")
+    assert widget.SaveTree(path)
+    names = [entry["name"] for entry in json.load(open(tmp_path / "s_BB.json", encoding="utf-8"))["blackboard"]]
+    assert names == ["good"]
+
+def test_container_tooltips_are_exact_for_small_values(widget):
+    widget.SetEntry(list(range(8)), "eight")
+    widget.SetEntry({"z": 1, "a": 2}, "ordered")
+    assert widget.blackboard_view().row("eight").value_widget.toolTip() == repr(list(range(8)))
+    assert widget.blackboard_view().row("ordered").value_widget.toolTip() == "{'z': 1, 'a': 2}"
+
+def test_safe_repr_of_large_bytes_is_cheap_and_short():
+    text = safe_repr(b"x" * 10_000_000)
+    assert len(text) <= 500 and "10000000 bytes" in text
+
+
+# ============================================================================ snapshots: renames and Reset flags
+def test_restore_brings_back_a_removed_entry_with_its_reset_flag(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.add("other", "Integer", 2)
+    snapshot = store.snapshot()
+    store.remove("counter")
+    store.set_reset("other", True)
+    store.restore(snapshot)
+    assert store.names() == ["counter", "other"]
+    assert store.get("counter") == 1
+    assert store.reset_names() == ["counter"], "the Reset flags are those of the snapshot"
+
+
+def test_restore_renames_a_renamed_entry_back(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.add("last", "String", "x")
+    snapshot = store.snapshot()
+    store.rename("counter", "count")
+    store.set("count", 5)
+    renames, removed = [], []
+    store.entryRenamed.connect(lambda old, new: renames.append((old, new)))
+    store.entryRemoved.connect(removed.append)
+    store.restore(snapshot)
+    assert renames == [("count", "counter")], "nodes that followed the rename follow it back"
+    assert removed == []
+    assert store.items() == [("counter", "Integer", 1), ("last", "String", "x")]
+    assert store.reset_names() == ["counter"]
+
+
+def test_restore_undoes_swapped_names(qapp):
+    store = BlackboardStore()
+    store.add("a", "Integer", 1)
+    store.add("b", "String", "two")
+    snapshot = store.snapshot()
+    store.rename("a", "tmp")
+    store.rename("b", "a")
+    store.rename("tmp", "b")
+    store.restore(snapshot)
+    assert store.items() == [("a", "Integer", 1), ("b", "String", "two")]
+
+
+def test_restore_removes_an_entry_created_under_the_old_name_of_a_renamed_one(qapp):
+    store = BlackboardStore()
+    store.add("a", "Integer", 1)
+    snapshot = store.snapshot()
+    store.rename("a", "b")
+    store.add("a", "String", "new")
+    store.restore(snapshot)
+    assert store.items() == [("a", "Integer", 1)]
+
+
+def test_restore_of_a_plain_list_keeps_the_reset_flags(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.restore([("counter", "Integer", 4), ("new", "Integer", 0)])
+    assert store.items() == [("counter", "Integer", 4), ("new", "Integer", 0)]
+    assert store.reset_names() == ["counter"]
+
+
+def test_a_snapshot_is_a_list_of_entries(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    assert store.snapshot() == [("counter", "Integer", 1)]
+    assert store.snapshot().resets == {"counter"}
+
+
+@pytest.mark.parametrize(
+    "start, changed",
+    [([1, 0], [True, False]), ([0.0], [-0.0]), ({"k": 1}, {"k": 1.0}), ((1,), (True,)), ({1}, {True})],
+    ids=["bools", "negative zero", "dict value", "tuple", "set"],
+)
+def test_reset_entries_tells_values_apart_that_compare_equal(qapp, start, changed):
+    """``==`` takes [1, 0] for [True, False]: the entry would not be reset."""
+    store = BlackboardStore()
+    store.add("value", "Object", start, reset=True)
+    store.start_loop_capture()
+    store.set("value", changed)
+    assert store.reset_entries(store.finish_loop_capture()) == ["value"]
+    assert store.get("value") is start  # an Object entry is kept by reference

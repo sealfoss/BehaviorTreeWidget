@@ -1,0 +1,58 @@
+{
+  "format": "behavior_tree_widget",
+  "version": 1,
+  "config": {
+    "tick_interval_ms": 100,
+    "repeat": false,
+    "restore_blackboard": false,
+    "default_memory": true
+  },
+  "view": {
+    "zoom": 1.0,
+    "center": [
+      62.0,
+      60.0
+    ]
+  },
+  "nodes": [
+    {
+      "id": "05e1f9e978114d2eaf3c72a2517d9b4b",
+      "type": "Root",
+      "title": "Root",
+      "x": 0.0,
+      "y": 0.0,
+      "composite": "Sequence",
+      "memory": true
+    },
+    {
+      "id": "8754671c71074a568917ee72bff2a698",
+      "type": "UDP Message",
+      "title": "UDP Message",
+      "x": -200.0,
+      "y": 200.0,
+      "fields": {
+        "Destination IP": "192.168.1.20",
+        "Destination Port": 9000,
+        "Message": "hello é ✓"
+      }
+    },
+    {
+      "id": "7f9396bd60904e21908d096de8c65135",
+      "type": "Notes",
+      "title": "Notes",
+      "x": 150.0,
+      "y": 180.0,
+      "fields": {},
+      "text": "First line\nSecond line é✓",
+      "width": 300,
+      "height": 150
+    }
+  ],
+  "connections": [
+    {
+      "parent": "05e1f9e978114d2eaf3c72a2517d9b4b",
+      "child": "8754671c71074a568917ee72bff2a698"
+    }
+  ],
+  "blackboard": []
+}

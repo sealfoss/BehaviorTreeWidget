@@ -6,10 +6,12 @@ Run it with ``python -m behavior_tree_widget [tree.json]`` or the
 
 from __future__ import annotations
 
+import functools
 import logging
 import random
 import sys
 import time
+from typing import override
 
 from PySide6.QtCore import QFile
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox
@@ -25,6 +27,7 @@ class Wait(LeafNodeWidget):
     _title = "Wait"
     _fields = {"seconds": 1.0}
 
+    @override
     def OnRun(self, tree):
         deadline = time.monotonic() + max(0.0, self.GetField("seconds"))
         while time.monotonic() < deadline:
@@ -41,6 +44,7 @@ class LogMessage(LeafNodeWidget):
     _fields = {"message": "Hello from the behavior tree!", "level": ["INFO", "WARNING", "ERROR"]}
     RUN_IN_THREAD = False  # quick, runs on the GUI thread
 
+    @override
     def OnRun(self, tree):
         level = getattr(logging, self.GetFieldSelection("level"), logging.INFO)
         message = self.GetField("message")
@@ -56,6 +60,7 @@ class IncrementCounter(LeafNodeWidget):
     _fields = {"entry": "counter", "step": 1}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         name = self.GetField("entry")
         value = tree.GetEntry(name) if tree.HasEntry(name) else 0
@@ -70,6 +75,7 @@ class CounterAtLeast(LeafNodeWidget):
     _fields = {"entry": "counter", "threshold": 3}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         name = self.GetField("entry")
         return tree.HasEntry(name) and tree.GetEntry(name) >= self.GetField("threshold")
@@ -82,6 +88,7 @@ class RandomOutcome(LeafNodeWidget):
     _fields = {"success_probability": 0.5}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         return random.random() < self.GetField("success_probability")
 
@@ -99,6 +106,7 @@ class MoveTo(LeafNodeWidget):
         "label": "target",
     }
 
+    @override
     def OnRun(self, tree):
         position = tree.GetEntry("position") if tree.HasEntry("position") else [0.0, 0.0]
         target = [self.GetField("x"), self.GetField("y")]
@@ -107,12 +115,12 @@ class MoveTo(LeafNodeWidget):
         while True:
             if self.CancelRequested():
                 return False
-            delta = [t - p for t, p in zip(target, position)]
+            delta = [t - p for t, p in zip(target, position, strict=True)]
             distance = (delta[0] ** 2 + delta[1] ** 2) ** 0.5
             if distance <= step:
                 tree.SetEntry(target, "position")
                 return True
-            position = [p + d / distance * step for p, d in zip(position, delta)]
+            position = [p + d / distance * step for p, d in zip(position, delta, strict=True)]
             tree.SetEntry([round(p, 3) for p in position], "position")
             time.sleep(0.05)
 
@@ -123,6 +131,7 @@ class Fail(LeafNodeWidget):
     _title = "Fail"
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         return False
 
@@ -134,9 +143,11 @@ class RunningTicks(LeafNodeWidget):
     _fields = {"ticks": 3}
     RUN_IN_THREAD = False
 
+    @override
     def OnStart(self, tree):
         self._remaining = self.GetField("ticks")
 
+    @override
     def OnRun(self, tree):
         if self._remaining > 0:
             self._remaining -= 1
@@ -162,9 +173,16 @@ class DemoWindow(QMainWindow):
         self.tree.nodeError.connect(lambda node, message: self._status.setText(f"{node.GetTitle()}: {message}"))
         self.tree.treeLoaded.connect(lambda path: self._status.setText(f"Loaded {path}"))
         self.tree.treeSaved.connect(lambda path: self._status.setText(f"Saved {path}"))
+        # The tree's log (Print Message nodes log at DEBUG by default); INFO lists every node run.
+        for level, signal in (("ERROR", self.tree.errorLogged), ("WARNING", self.tree.warningLogged),
+                              ("DEBUG", self.tree.debugLogged)):
+            signal.connect(
+                lambda message, level=level: self._status.setText(f"{level}: {(message.splitlines() or [''])[0]}")
+            )
         self.resize(1000, 720)
 
-    def closeEvent(self, event):  # noqa: N802
+    @override
+    def closeEvent(self, event):
         if not self.tree.ConfirmDiscardChanges():
             event.ignore()
             return
@@ -175,32 +193,39 @@ class DemoWindow(QMainWindow):
 def _unconsumed_arguments(argv: list[str], arguments: list[str]) -> list[str]:
     """``argv`` without the entries QApplication consumed (its options, e.g. ``-style fusion``).
 
-    ``arguments`` is ``QApplication.arguments()``: Qt only removes entries, but it decodes
-    them with the local 8-bit code page, which garbles other characters (e.g. in file
-    names on Windows). So the kept entries are taken from ``argv``. If that is ambiguous,
+    ``arguments`` is ``QApplication.arguments()``. Qt only removes entries, but it decodes them
+    with the local 8-bit code page, which garbles other characters (e.g. in file names on
+    Windows), so the kept entries are taken from ``argv``. Qt removes options (``-name``) and the
+    values following them; every way of removing such entries that leaves ``arguments`` is
+    considered. If they keep different strings (a garbled name can look like an option's value),
     ``arguments`` is returned.
     """
+    removable = len(argv) - len(arguments)  # the number of entries Qt consumed
+    if not argv or removable < 0:
+        return list(arguments)
 
     def same(arg: str, qt_arg: str) -> bool:
         return arg == qt_arg or QFile.decodeName(QFile.encodeName(arg)) == qt_arg
 
-    # Qt removes options ("-name") and option values; a value follows its option with only
-    # removed entries in between. Follow every way of removing entries that fits:
-    # (index into arguments, removed options not yet followed by a removed value) -> up to
-    # two distinct kept lists. The result is used only if all of them keep the same strings.
-    removable = len(argv) - len(arguments)  # the number of entries Qt consumed
-    states: dict[tuple[int, int], set[tuple[str, ...]]] = {(1, 0): {tuple(argv[:1])}}
-    for position, arg in enumerate(argv[1:], 1):
-        following: dict[tuple[int, int], set[tuple[str, ...]]] = {}
-        for (index, options), kept in states.items():
-            if index < len(arguments) and same(arg, arguments[index]):
-                following.setdefault((index + 1, 0), set()).update(k + (arg,) for k in kept)
-            if position - index < removable and (arg.startswith("-") or options):
-                key = (index, options + 1 if arg.startswith("-") else options - 1)
-                following.setdefault(key, set()).update(kept)
-        states = {key: set(list(kept)[:2]) for key, kept in following.items()}
-    results = set().union(*(kept for (index, _), kept in states.items() if index == len(arguments)))
-    return list(results.pop()) if len(results) == 1 else list(arguments)
+    @functools.cache
+    def kept(position: int, index: int, waiting: int) -> frozenset[tuple[str, ...]]:
+        """The entries ``argv[position:]`` can keep while leaving ``arguments[index:]`` (at most two
+        different ones); ``waiting``: options removed before ``position`` whose value was not."""
+        if position == len(argv):
+            return frozenset({()}) if index == len(arguments) else frozenset()
+        arg = argv[position]
+        ways: set[tuple[str, ...]] = set()
+        if index < len(arguments) and same(arg, arguments[index]):
+            ways.update((arg, *rest) for rest in kept(position + 1, index + 1, 0))
+        if position - index < removable:  # Qt may have removed this entry
+            if arg.startswith("-"):
+                ways.update(kept(position + 1, index, waiting + 1))  # an option
+            elif waiting:
+                ways.update(kept(position + 1, index, waiting - 1))  # the value of an option
+        return frozenset(list(ways)[:2])
+
+    results = kept(1, 1, 0)
+    return [argv[0], *next(iter(results))] if len(results) == 1 else list(arguments)
 
 
 def main(argv: list[str] | None = None) -> int:

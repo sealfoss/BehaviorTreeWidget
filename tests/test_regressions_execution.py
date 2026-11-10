@@ -33,7 +33,9 @@ from PySide6.QtWidgets import QLabel
 
 from behavior_tree_widget import BehaviorTreeWidget, ExecutionCancelled, LeafNodeWidget, NodeStatus
 from behavior_tree_widget.execution import LeafBehaviour
-from conftest import Succeed, fast_config, run_until_idle
+from behavior_tree_widget.serialization import blackboard_document, tree_file_paths, write_json_atomic
+
+from conftest import Succeed, assert_blackboard_in_file, fast_config, run_until_idle
 
 READY, RUNNING, SUCCEEDED, FAILED = "Ready", "Running", "Succeeded", "Failed"
 LOGGER = "behavior_tree_widget"
@@ -118,7 +120,7 @@ class RxLateWriter(LeafNodeWidget):
         index = state.enter()
         try:
             state.gate.wait(10)
-            store = tree.blackboardStore()
+            store = tree.blackboard_store()
             attempts = {
                 "SetEntry": lambda: tree.SetEntry(42, "result"),
                 "AddEntry": lambda: tree.AddEntry(f"added{index}", "Integer", 1),
@@ -415,17 +417,17 @@ def save(bt) -> None:
 
 
 def make_other_tree_file(qtbot, bt, path) -> bool:
-    """Save a tree file with a single Integer entry y = 3 using a throw-away blackboard state.
+    """Write a tree like the current tree, with an Integer entry y = 3 added to its blackboard, to
+    the tree file and the blackboard file named after ``path`` (``<name>_BT.json`` / ``<name>_BB.json``).
 
-    The widget keeps its own file afterwards (SaveTree(path) switches the current file).
+    The widget keeps its own files and blackboard. (Saving there and removing y again would
+    write the removal into those files: blackboard changes go to the current blackboard file.)
     """
-    original = bt.GetFilePath()
-    bt.AddEntry("y", "Integer", 3)
-    ok = bt.SaveTree(path)
-    bt.RemoveEntry("y")
-    if original:
-        assert bt.SaveTree(original)
-    return ok
+    tree_path, blackboard_path = tree_file_paths(str(path))
+    write_json_atomic(tree_path, bt._tree_data(quiet=True))
+    blackboard = [*bt.blackboard_store().to_list(quiet=True), {"name": "y", "type": "Integer", "value": 3}]
+    write_json_atomic(blackboard_path, blackboard_document(blackboard))
+    return True
 
 
 # ============================================================================ one OnRun call per node
@@ -629,7 +631,7 @@ def test_worker_of_previous_tree_cannot_touch_the_loaded_tree(qtbot, bt, gate, t
     assert gate.done.wait(5)
     qtbot.wait(50)
     assert_cancelled_writes_refused(gate.outcomes[0], missing_ok=operation == "NewTree")
-    assert bt.blackboardStore().items() == expected
+    assert bt.blackboard_store().items() == expected
     assert bt.IsModified() is False
     assert modified == []
     assert writer not in bt.GetNodes()
@@ -637,7 +639,7 @@ def test_worker_of_previous_tree_cannot_touch_the_loaded_tree(qtbot, bt, gate, t
 
 # ============================================================================ THREAD_WAIT
 def test_thread_wait_default_value():
-    assert LeafNodeWidget.THREAD_WAIT == pytest.approx(0.02)
+    assert pytest.approx(0.02) == LeafNodeWidget.THREAD_WAIT
 
 
 def test_quick_threaded_leaf_completes_within_the_tick_that_starts_it(qtbot, bt):
@@ -1164,7 +1166,7 @@ def test_structure_edits_raise_while_executing_and_run_completes(qtbot, bt, paus
         "RemoveChild": lambda: root.RemoveChild(leaf),
     }
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        for name, attempt in attempts.items():
+        for attempt in attempts.values():
             with pytest.raises(RuntimeError):
                 attempt()
         instance = Succeed()
@@ -1200,7 +1202,7 @@ def test_runtime_changes_never_mark_the_tree_modified(qtbot, bt, writer_class):
     fast_config(bt, tick_interval_ms=1)
     save(bt)
     runtime_flags = record(writer.changed)
-    store_flags = record(bt.blackboardStore().changed)
+    store_flags = record(bt.blackboard_store().changed)
     modified = record(bt.modifiedChanged)
     for run_index in range(15):
         bt.Execute()
@@ -1232,9 +1234,9 @@ def test_user_edits_in_editors_mark_the_tree_modified(qtbot, bt):
     assert flags == [False]
     assert bt.IsModified() is True
     save(bt)
-    bt.blackboardView().row("counter").value_widget.setValue(77)
+    bt.blackboard_view().row("counter").value_widget.setValue(77)
     assert bt.GetEntry("counter") == 77
-    assert bt.IsModified() is True
+    assert_blackboard_in_file(bt)  # blackboard edits are written to the tree file at once
 
 
 def test_edits_while_paused_programmatic_are_runtime_user_edits_are_not(qtbot, bt):
@@ -1260,9 +1262,9 @@ def test_edits_while_paused_programmatic_are_runtime_user_edits_are_not(qtbot, b
     assert flags[-1] is False
     assert bt.IsModified() is True
     save(bt)
-    bt.blackboardView().row("counter").value_widget.setValue(9)
+    bt.blackboard_view().row("counter").value_widget.setValue(9)
     assert bt.GetEntry("counter") == 9
-    assert bt.IsModified() is True
+    assert_blackboard_in_file(bt)  # blackboard edits are written to the tree file at once
     bt.Stop()
 
 
@@ -1299,7 +1301,7 @@ def test_reset_after_completed_run_restores_pre_run_values_once(qtbot, bt):
     assert bt.GetEntryNames() == ["x", "obj"]
     assert bt.GetEntry("x") == 0
     assert bt.GetEntry("obj") is not None and bt.GetEntry("obj").label == "before"
-    assert bt.blackboardView().row("made") is None
+    assert bt.blackboard_view().row("made") is None
     # the snapshot is consumed: a later Reset does not roll back again
     bt.SetEntry(7, "x")
     bt.Reset()
@@ -1395,7 +1397,7 @@ def test_load_or_new_during_a_tick(qtbot, bt, tmp_path, operation, where):
     assert new_root is not None, "the widget was left without a tree"
     assert leaf not in bt.GetNodes()
     expected = [] if operation == "NewTree" else [("y", "Integer", 3)]
-    assert bt.blackboardStore().items() == expected
+    assert bt.blackboard_store().items() == expected
     assert bt.IsModified() is False
     assert all(node.GetStatus() is NodeStatus.READY for node in bt.GetNodes())
     finished = record(bt.executionFinished)
@@ -1440,7 +1442,7 @@ def test_command_from_idle_state_slot_after_completion_keeps_finished_signal(qtb
         assert bt.GetEntry("x") == 0
     else:
         assert issued[1] is True
-        assert bt.blackboardStore().items() == [("y", "Integer", 3)]
+        assert bt.blackboard_store().items() == [("y", "Integer", 3)]
     assert finished == [SUCCEEDED], "the completed run was not reported"
     assert ticked == [1]
 
@@ -1457,7 +1459,7 @@ def test_shutdown_while_executing(qtbot, bt, paused, caplog):
     if paused:
         bt.Pause()
     assert bt.view().is_locked()
-    key = bt.blackboardStore().key("x")
+    key = bt.blackboard_store().key("x")
     assert py_trees.blackboard.Blackboard.exists(key)
     bt.Shutdown()
     assert states[-1] == "Idle"
@@ -1469,7 +1471,7 @@ def test_shutdown_while_executing(qtbot, bt, paused, caplog):
     # blackboard released and rows cleared
     assert not py_trees.blackboard.Blackboard.exists(key)
     assert bt.GetEntryNames() == []
-    assert bt.blackboardView().row("x") is None
+    assert bt.blackboard_view().row("x") is None
     with pytest.raises(RuntimeError):
         bt.SetEntry(2, "x")
     with pytest.raises(RuntimeError):
@@ -1507,7 +1509,7 @@ def test_close_without_delete_on_close_stops_and_widget_stays_usable(qtbot, bt, 
     assert bt.isWindow()
     assert not bt.testAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     bt.SetEntry(5, "counter")
-    key = bt.blackboardStore().key("counter")
+    key = bt.blackboard_store().key("counter")
     leaf = add_leaf(bt, RxGated)
     leaf.state = gate
     fast_config(bt)
@@ -1527,7 +1529,7 @@ def test_close_without_delete_on_close_stops_and_widget_stays_usable(qtbot, bt, 
     assert bt.GetEntry("counter") == 5
     bt.SetEntry(6, "counter")
     assert bt.GetEntry("counter") == 6
-    assert bt.blackboardView().row("counter") is not None
+    assert bt.blackboard_view().row("counter") is not None
     extra = add_leaf(bt, "Succeed", x=400.0)
     gate.gate.set()
     finished = record(bt.executionFinished)

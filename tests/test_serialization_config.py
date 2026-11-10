@@ -19,27 +19,64 @@ from __future__ import annotations
 
 import copy
 import decimal
+import errno
 import json
+import logging
 import math
 import os
 import stat
+import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
+from pytestqt.exceptions import capture_exceptions
 
 import behavior_tree_widget
-from behavior_tree_widget import serialization
+from behavior_tree_widget import UnknownLeafNodeWidget, serialization
+from behavior_tree_widget import serialization as serialization_module
 from behavior_tree_widget.config import ConfigureDialog, TreeConfig
 from behavior_tree_widget.serialization import (
     FORMAT_NAME,
     FORMAT_VERSION,
+    MAX_NESTING,
     TreeFileError,
     decode_value,
     encode_value,
     is_encodable,
+    read_blackboard_file,
     read_tree_file,
     write_json_atomic,
 )
+
+from support.round3 import (
+    HIDDEN,
+    LOGGER,
+    SYSTEM,
+    WINDOWS,
+    _attributes,
+    _OsProxy,
+    _set_attributes,
+    add_leaf,
+    critical_texts,
+    describe,
+    node_by_id,
+    node_entry,
+    read_json,
+    read_only_file,
+    save,
+    saved_node,
+    warning_texts,
+    warnings_logged,
+)
+from support.round3 import (
+    write_tree as r3_write_tree,
+)
+from support.round4 import Quick, build
+from support.round6 import _ENCODE_SCRIPT
+from support.round7 import Holder, _nested
+from support.round8 import Holder as R8Holder
+from support.round8 import _json_window, _nested_frozenset
 
 
 # ============================================================================ helpers
@@ -126,7 +163,7 @@ ROUND_TRIP_VALUES = [
     pytest.param(set(), id="empty-set"),
     pytest.param({3, 1, 2}, id="int-set"),
     pytest.param({"b", "a", "c"}, id="str-set"),
-    pytest.param({1, "a", None, (1, 2), 2.5, True}, id="mixed-set"),
+    pytest.param({1, "a", None, (1, 2), 2.5}, id="mixed-set"),
     pytest.param({(1, (2, 3)), ("x",)}, id="set-of-nested-tuples"),
     pytest.param([{1, 2}, ({3},)], id="sets-inside-containers"),
     pytest.param({1: "a", 2: "b"}, id="int-key-dict"),
@@ -203,7 +240,8 @@ def test_set_encoding_is_deterministic():
     first = encode_value({"b", "a", "c", 10, 2})
     second = encode_value({2, 10, "c", "a", "b"})
     assert first == second
-    assert encode_value(set(range(30))) == encode_value(set(reversed(range(30))))
+    # Built in another order on purpose: the encoding must not depend on the order of the set.
+    assert encode_value(set(range(30))) == encode_value(set(reversed(range(30))))  # noqa: C414
 
 
 def test_dict_order_is_preserved():
@@ -577,7 +615,7 @@ def test_read_tree_file_missing_file(tmp_path):
 def test_read_tree_file_directory(tmp_path):
     folder = tmp_path / "folder.json"
     folder.mkdir()
-    with pytest.raises(TreeFileError, match="folder.json"):
+    with pytest.raises(TreeFileError, match=r"folder\.json"):
         read_tree_file(str(folder))
 
 
@@ -598,7 +636,7 @@ def test_read_tree_file_invalid_json(tmp_path, text):
 def test_read_tree_file_invalid_utf8(tmp_path):
     path = tmp_path / "binary.json"
     path.write_bytes(b'{"format": "\xff\xfe\xfa"}')
-    with pytest.raises(TreeFileError, match="binary.json"):
+    with pytest.raises(TreeFileError, match=r"binary\.json"):
         read_tree_file(str(path))
 
 
@@ -944,14 +982,14 @@ def test_widget_get_config_returns_copy(bt):
 def test_saved_tree_file_passes_validation_and_contains_config(bt, tmp_path):
     config = TreeConfig(tick_interval_ms=250, repeat=True, restore_blackboard=True, default_memory=False)
     bt.SetConfig(config)
-    path = tmp_path / "saved.json"
-    assert bt.SaveTree(str(path))
-    data = read_tree_file(str(path))
+    assert bt.SaveTree(str(tmp_path / "saved.json"))
+    data = read_tree_file(str(tmp_path / "saved_BT.json"))
     assert data["format"] == FORMAT_NAME
     assert data["version"] == FORMAT_VERSION
     assert data["config"] == config.to_dict()
     assert isinstance(data["nodes"], list) and isinstance(data["connections"], list)
-    assert isinstance(data["blackboard"], list)
+    assert "blackboard" not in data  # the blackboard is in a file of its own
+    assert isinstance(read_blackboard_file(str(tmp_path / "saved_BB.json")), list)  # validates that file
     assert temp_files(tmp_path) == []
 
 
@@ -1026,7 +1064,6 @@ def test_set_in_hashable_position_decodes_as_frozenset():
     assert decode_value({"__set__": [{"__set__": [1, 2]}]}) == {frozenset({1, 2})}
 
 
-
 def test_write_json_atomic_retries_then_fails_cleanly_when_target_is_held_open(tmp_path, monkeypatch):
     """On Windows another program keeping the file open makes os.replace fail with PermissionError:
     the replacement is retried; if it keeps failing the original is left intact and no temp file remains."""
@@ -1047,3 +1084,384 @@ def test_write_json_atomic_retries_then_fails_cleanly_when_target_is_held_open(t
     assert len(calls) == serialization._REPLACE_ATTEMPTS
     assert json.loads(path.read_text(encoding="utf-8")) == {"original": True}
     assert os.listdir(tmp_path) == ["tree.json"]
+
+
+# ============================================================================ Object entries / names / order
+def test_object_entries_in_files_are_skipped_with_a_problem(qtbot, make_widget, dialogs, tmp_path, caplog):
+    path = r3_write_tree(
+        tmp_path / "objects.json",
+        [node_entry("r", "Root")],
+        blackboard=[
+            {"name": "a", "type": "Integer", "value": 1},
+            {"name": "o", "type": "Object", "value": 5},
+            {"name": "b", "type": "String", "value": "s"},
+        ],
+    )
+    widget = make_widget()
+    marker = object()
+    widget.SetEntry(marker, "o")  # a run-time Object entry of the same name is kept, not replaced
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert widget.LoadTree(path)
+    assert widget.GetEntryNames() == ["a", "b", "o"]
+    assert widget.GetEntry("o") is marker
+    assert any("'o'" in message for message in warnings_logged(caplog))
+
+    other = make_widget()
+    dialogs.open_path = path
+    other.button("Load").click()
+    texts = warning_texts(dialogs)
+    assert len(texts) == 1 and "'o'" in texts[0] and "Object" in texts[0]
+    assert other.GetEntryNames() == ["a", "b"]
+
+
+# ============================================================================ read_tree_file
+@pytest.mark.parametrize("content", ["deep-nesting", "5000-digit-int"])
+def test_unparseable_json_raises_tree_file_error(qtbot, bt, dialogs, tmp_path, content):
+    if content == "deep-nesting":
+        depth = 200_000
+        text = '{"format": "behavior_tree_widget", "version": 1, "nodes": ' + "[" * depth + "]" * depth + "}"
+    else:
+        text = (
+            '{"format": "behavior_tree_widget", "version": 1, "nodes": [], "blackboard": '
+            '[{"name": "big", "type": "Integer", "value": ' + "9" * 5000 + "}]}"
+        )
+    path = tmp_path / "evil.json"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(TreeFileError):
+        read_tree_file(str(path))
+    bt.AddEntry("n", "Integer", 1)
+    add_leaf(bt, "Succeed")
+    save(bt)
+    before = describe(bt)
+    with pytest.raises(TreeFileError):
+        bt.LoadTree(str(path))
+    assert describe(bt) == before
+    dialogs.open_path = str(path)
+    with capture_exceptions() as exceptions:
+        bt.button("Load").click()
+    assert exceptions == []
+    assert dialogs.kinds()[-1] == "critical"
+    assert "evil.json" in critical_texts(dialogs)[-1]
+    assert describe(bt) == before
+
+
+# ============================================================================ files
+def test_unknown_leaf_keeps_undecodable_fields_and_unknown_keys(qtbot, make_widget, tmp_path):
+    raw_fields = {
+        "bad_dict": {"__dict__": [[1]]},
+        "bad_set": {"__set__": [[1, 2], "x"]},
+        "bad_nested": {"__tuple__": [{"__dict__": ["ab"]}]},
+    }
+    good_fields = {"count": 3, "mode": ["a", "b"], "pair": {"__tuple__": [1, "a"]}, "text": "hi"}
+    unknown_keys = {
+        "custom": {"z": [1, {"k": None}], "a": 1.5, "nested": {"__set__": "not a list"}},
+        "priority": 7,
+        "flag": None,
+        "memory": True,
+        "notes": "ünïcode ✓",
+    }
+    node = node_entry("u", "Mystery", 10.0, 220.0, title="M", fields={**good_fields, **raw_fields},
+                      field_selections={"mode": 1}, **unknown_keys)
+    path = r3_write_tree(tmp_path / "u.json", [node_entry("r", "Root"), node], [{"parent": "r", "child": "u"}])
+    widget = make_widget()
+    assert widget.LoadTree(path)
+    unknown = node_by_id(widget, "u")
+    assert isinstance(unknown, UnknownLeafNodeWidget)
+    out = tmp_path / "out_BT.json"
+    assert widget.SaveTree(str(out))
+    saved = saved_node(read_json(out), "u")
+    for key, value in raw_fields.items():
+        assert json.dumps(saved["fields"][key], ensure_ascii=False) == json.dumps(value, ensure_ascii=False), key
+    for key, value in unknown_keys.items():
+        assert json.dumps(saved[key], ensure_ascii=False) == json.dumps(value, ensure_ascii=False), key
+    for key, value in good_fields.items():
+        assert saved["fields"][key] == value, key
+    assert saved["field_selections"] == {"mode": 1}
+    assert (saved["type"], saved["title"]) == ("Mystery", "M")
+    # a second round trip is stable
+    again = make_widget()
+    assert again.LoadTree(str(out))
+    out2 = tmp_path / "out2_BT.json"
+    assert again.SaveTree(str(out2))
+    assert saved_node(read_json(out2), "u") == saved
+
+@pytest.mark.skipif(not WINDOWS, reason="Windows file attributes")
+@pytest.mark.parametrize("attributes", [HIDDEN, HIDDEN | SYSTEM], ids=["hidden", "hidden-system"])
+def test_write_json_atomic_keeps_hidden_and_system_attributes(tmp_path, attributes):
+    target = tmp_path / "hidden.json"
+    target.write_text("{}", encoding="utf-8")
+    _set_attributes(target, attributes)
+    assert _attributes(target) & attributes == attributes
+    try:
+        write_json_atomic(str(target), {"a": 1})
+        assert read_json(target) == {"a": 1}
+        assert _attributes(target) & attributes == attributes, hex(_attributes(target))
+        assert os.listdir(tmp_path) == ["hidden.json"]
+    finally:
+        _set_attributes(target, 0x80)  # FILE_ATTRIBUTE_NORMAL
+
+def test_write_json_atomic_read_only_target_names_it(tmp_path, read_only_file, monkeypatch):
+    monkeypatch.setattr(serialization_module, "time", SimpleNamespace(sleep=lambda seconds: None))
+    with pytest.raises(PermissionError) as info:
+        write_json_atomic(str(read_only_file), {"new": 2})
+    message = str(info.value)
+    assert os.path.realpath(str(read_only_file)) in message or str(read_only_file) in message, message
+    assert read_only_file.read_text(encoding="utf-8") == '{"old": 1}\n'
+    assert os.listdir(tmp_path) == ["ro_BT.json"], "no temp file may be left behind"
+
+@pytest.mark.parametrize("interactive", [False, True], ids=["programmatic", "save-button"])
+def test_save_tree_to_read_only_file(qtbot, bt, dialogs, tmp_path, read_only_file, monkeypatch, interactive):
+    monkeypatch.setattr(serialization_module, "time", SimpleNamespace(sleep=lambda seconds: None))
+    add_leaf(bt, "Succeed")
+    if interactive:
+        dialogs.save_path = str(read_only_file)
+        with capture_exceptions() as exceptions:
+            bt.button("Save").click()
+        assert exceptions == []
+        texts = critical_texts(dialogs)
+        assert len(texts) == 1 and "ro_BT.json" in texts[0]
+    else:
+        with pytest.raises(PermissionError) as info:
+            bt.SaveTree(str(read_only_file))
+        assert "ro_BT.json" in str(info.value)
+    assert read_only_file.read_text(encoding="utf-8") == '{"old": 1}\n'
+    assert sorted(os.listdir(tmp_path)) == ["ro_BT.json", "tree_BB.json", "tree_BT.json"]
+    assert bt.GetFilePath() == str(tmp_path / "tree_BT.json")
+
+@pytest.mark.skipif(not WINDOWS, reason="an open file blocks os.replace only on Windows")
+def test_write_json_atomic_never_overwrites_a_file_held_open(tmp_path, monkeypatch):
+    """A file another program keeps open is left intact (no risky in-place overwrite)."""
+    monkeypatch.setattr(serialization_module, "time", SimpleNamespace(sleep=lambda seconds: None))
+    target = tmp_path / "held.json"
+    original = '{"old": true, "padding": "' + "x" * 200 + '"}\n'
+    target.write_text(original, encoding="utf-8")
+    handle = open(target, encoding="utf-8")
+    try:
+        if os.name == "nt":
+            with pytest.raises(PermissionError) as info:
+                write_json_atomic(str(target), {"new": 1})
+            assert "held.json" in str(info.value)
+        else:
+            write_json_atomic(str(target), {"new": 1})  # POSIX allows replacing an open file
+    finally:
+        handle.close()
+    if os.name == "nt":
+        assert target.read_text(encoding="utf-8") == original
+    assert os.listdir(tmp_path) == ["held.json"]
+
+@pytest.mark.parametrize("scenario", ["transient", "always-existing", "always-new"])
+def test_write_json_atomic_retries_replace(tmp_path, monkeypatch, scenario):
+    monkeypatch.setattr(serialization_module, "time", SimpleNamespace(sleep=lambda seconds: None))
+    attempts = []
+    real_replace = os.replace
+
+    def flaky(source, destination):
+        attempts.append(destination)
+        if scenario == "transient" and len(attempts) >= 3:
+            return real_replace(source, destination)
+        raise PermissionError(13, "The process cannot access the file")
+
+    monkeypatch.setattr(serialization_module, "os", _OsProxy(flaky))
+    target = tmp_path / "target.json"
+    if scenario != "always-new":
+        target.write_text("{}", encoding="utf-8")
+    if scenario in ("always-new", "always-existing"):
+        with pytest.raises(PermissionError) as info:
+            write_json_atomic(str(target), {"a": 1})
+        assert "target.json" in str(info.value)
+        assert len(attempts) == 5
+        assert os.listdir(tmp_path) == ([] if scenario == "always-new" else ["target.json"])
+        if scenario == "always-existing":
+            assert read_json(target) == {}  # left untouched
+    else:
+        write_json_atomic(str(target), {"a": 1})
+        assert read_json(target) == {"a": 1}
+        assert len(attempts) == (3 if scenario == "transient" else 5)
+        assert os.listdir(tmp_path) == ["target.json"]
+
+
+# ============================================================================ data edge cases
+def test_unknown_placeholder_keeps_selections_of_raw_fields(make_widget, tmp_path):
+    path = tmp_path / "raw.json"
+    data = {
+        "format": "behavior_tree_widget",
+        "version": 1,
+        "nodes": [
+            {"id": "r", "type": "Root", "title": "Root", "x": 0, "y": 0},
+            {"id": "m", "type": "Missing", "title": "Missing", "x": 0, "y": 200,
+             "fields": {"choice": {"__set__": [[1, 2]]}, "plain": ["a", "b"]},
+             "field_selections": {"choice": 1, "plain": 1}},
+        ],
+        "connections": [{"parent": "r", "child": "m"}],
+        "blackboard": [],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    widget = make_widget(node_types=[])
+    assert widget.LoadTree(str(path))
+    widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
+    node = next(n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m")
+    assert node["fields"]["choice"] == {"__set__": [[1, 2]]}
+    assert node["field_selections"] == {"choice": 1, "plain": 1}
+
+def test_non_str_field_keys_are_skipped_when_saving(widget, dialogs, tmp_path, caplog):
+    (quick,) = build(widget, Quick)
+    quick.SetField((1, 2), "tuple key")
+    quick.SetField("ok", 5)
+    path = str(tmp_path / "keys_BT.json")
+    assert widget.SaveTree(path)
+    saved = next(n for n in json.load(open(path, encoding="utf-8"))["nodes"] if n["type"] == "R4Quick")
+    assert saved["fields"] == {"ok": 5}
+    assert any("(1, 2)" in record.getMessage() for record in caplog.records)
+
+
+# ============================================================================ files
+def test_write_json_atomic_fails_fast_when_files_cannot_be_created(tmp_path, monkeypatch):
+    real_open = os.open
+
+    def deny(path, flags, mode=0o777):
+        if str(path).endswith(".json.tmp"):
+            raise PermissionError(errno.EACCES, "Access is denied")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(serialization.os, "open", deny)
+    with pytest.raises(PermissionError) as info:
+        serialization.write_json_atomic(str(tmp_path / "t.json"), {"a": 1})
+    assert "no permission to create files" in str(info.value)
+    assert os.listdir(tmp_path) == []
+
+def test_write_json_atomic_reports_missing_folder_and_folder_target(tmp_path):
+    with pytest.raises(FileNotFoundError) as info:
+        serialization.write_json_atomic(str(tmp_path / "missing" / "t.json"), {})
+    assert "does not exist" in str(info.value) and ".tmp" not in str(info.value)
+    (tmp_path / "folder.json").mkdir()
+    with pytest.raises(IsADirectoryError):
+        serialization.write_json_atomic(str(tmp_path / "folder.json"), {})
+
+
+# ============================================================================ UX details
+def test_unknown_placeholder_keeps_selections_verbatim(make_widget, tmp_path):
+    path = tmp_path / "raw.json"
+    selections = {"plain": "1", "flag": True, "neg": -3, "big": 99}
+    data = {
+        "format": "behavior_tree_widget",
+        "version": 1,
+        "nodes": [
+            {"id": "r", "type": "Root", "title": "Root", "x": 0, "y": 0},
+            {"id": "m", "type": "Missing", "title": "Missing", "x": 0, "y": 200,
+             "fields": {"plain": ["a", "b"], "nosel": ["x", "y"]}, "field_selections": selections},
+        ],
+        "connections": [],
+        "blackboard": [],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    widget = make_widget(node_types=[])
+    assert widget.LoadTree(str(path))
+    assert widget.SaveTree(str(path))  # writes raw_BT.json (and raw_BB.json); raw.json is left as it is
+    node = next(n for n in json.load(open(tmp_path / "raw_BT.json", encoding="utf-8"))["nodes"] if n["id"] == "m")
+    assert node["field_selections"] == selections
+
+
+# ============================================================================ files
+def test_sets_are_saved_in_the_same_order_whatever_the_hash_seed():
+    package_root = os.path.dirname(os.path.dirname(os.path.abspath(behavior_tree_widget.__file__)))
+    outputs = set()
+    for seed in ("0", "1", "2", "3", "12345"):
+        env = dict(os.environ, PYTHONHASHSEED=seed, QT_QPA_PLATFORM="offscreen")
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
+        result = subprocess.run(
+            [sys.executable, "-c", _ENCODE_SCRIPT], env=env, capture_output=True, text=True, timeout=120
+        )
+        assert result.returncode == 0, result.stderr
+        outputs.add(result.stdout)
+    assert len(outputs) == 1
+    decoded = json.loads(outputs.pop())
+    assert decoded["words"]["__set__"] == sorted(decoded["words"]["__set__"], key=json.dumps)
+
+
+# ============================================================================ files
+@pytest.mark.parametrize(
+    "value", [{10**5000, 3}, [10**5000], 10**5000, {"a": (10**5000,)}], ids=["set", "list", "int", "dict"]
+)
+def test_integers_too_long_for_json_are_not_encodable(value):
+    assert not is_encodable(value)
+    with pytest.raises(TypeError, match="integers this large"):
+        encode_value(value)
+
+def test_a_huge_integer_entry_is_skipped_when_saving(widget, make_widget, tmp_path):
+    widget.SetEntry({10**5000, 3}, "huge_set")
+    widget.SetEntry([10**5000], "huge_list")
+    widget.SetEntry(7, "keep_me")
+    path = str(tmp_path / "saved.json")
+    assert widget.SaveTree(path)
+    with open(tmp_path / "saved_BB.json", encoding="utf-8") as handle:
+        names = [entry["name"] for entry in json.load(handle)["blackboard"]]
+    assert "keep_me" in names and "huge_set" not in names and "huge_list" not in names
+
+@pytest.mark.parametrize("kind", ["tuple", "frozenset", "list", "dict", "int-key", "tuple-key"])
+def test_everything_that_is_written_can_be_read_back(kind):
+    depth = MAX_NESTING - 1 if kind == "tuple-key" else MAX_NESTING
+    deepest = _nested(kind, depth)
+    assert decode_value(json.loads(json.dumps(encode_value(deepest)))) == deepest
+    with pytest.raises(TypeError, match="nested too deeply"):
+        encode_value(_nested(kind, depth + 1))
+
+def test_a_deeply_nested_field_is_reported_when_saving_instead_of_lost_when_loading(widget, make_widget, tmp_path):
+    (holder,) = build(widget, Holder)
+    holder.SetField("path", _nested("tuple", MAX_NESTING + 50))
+    path = str(tmp_path / "deep_BT.json")
+    assert widget.SaveTree(path)
+    with open(path, encoding="utf-8") as handle:
+        saved = json.load(handle)
+    fields = [node.get("fields", {}) for node in saved["nodes"] if node.get("type") == "R7Holder"]
+    assert fields and "path" not in fields[0]
+
+    holder.SetField("path", _nested("tuple", 200))
+    assert widget.SaveTree(path)
+    other = make_widget()
+    other.RegisterNodeType(Holder)
+    assert other.LoadTree(path)
+    (loaded,) = [node for node in other.GetNodes() if isinstance(node, Holder)]
+    assert loaded.GetField("path") == _nested("tuple", 200)
+
+
+# ============================================================================ placeholders
+def test_a_deep_set_field_survives_a_node_type_that_is_not_registered(widget, make_widget, tmp_path):
+    (holder,) = build(widget, R8Holder)
+    deep = _nested_frozenset(240)
+    holder.SetField("path", deep)
+    first = str(tmp_path / "first.json")
+    assert widget.SaveTree(first)
+
+    without = make_widget()  # R8Holder is not registered here
+    assert without.LoadTree(first)
+    (placeholder,) = [node for node in without.GetNodes() if isinstance(node, UnknownLeafNodeWidget)]
+    second = str(tmp_path / "second.json")
+    assert without.SaveTree(second)
+
+    again = make_widget()
+    again.RegisterNodeType(R8Holder)
+    assert again.LoadTree(second)
+    (loaded,) = [node for node in again.GetNodes() if isinstance(node, R8Holder)]
+    assert loaded.GetField("path") == deep
+
+def test_deep_raw_placeholder_data_does_not_block_saving(widget, make_widget, tmp_path):
+    depth = _json_window()
+    if depth is None:
+        pytest.skip("json reads and writes the same depths on this Python")
+    base = str(tmp_path / "base_BT.json")
+    assert widget.SaveTree(base)
+    with open(base, encoding="utf-8") as handle:
+        text = json.dumps(json.load(handle))
+    node = '{"id": "n1", "type": "R8NotRegistered", "title": "Deep", "x": 0, "y": 200, "fields": {"deep": %s, "ok": 1}}'
+    text = text.replace('"nodes": [', '"nodes": [' + node % ("[" * depth + "]" * depth) + ", ", 1)
+    hand_written = tmp_path / "hand.json"
+    hand_written.write_text(text, encoding="utf-8")
+
+    other = make_widget()
+    assert other.LoadTree(str(hand_written))  # the deep field is kept as read
+    out = str(tmp_path / "out_BT.json")
+    assert other.SaveTree(out)
+    with open(out, encoding="utf-8") as handle:
+        saved = json.load(handle)
+    (placeholder,) = [n for n in saved["nodes"] if n["type"] == "R8NotRegistered"]
+    assert placeholder["fields"] == {"ok": 1}

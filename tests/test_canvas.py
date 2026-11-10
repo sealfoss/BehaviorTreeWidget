@@ -7,7 +7,8 @@ produce them. Requirements come from ``instructions.txt``:
 * drag ChildConnections <-> ParentConnection to connect (red / green / blue line and labels),
 * click a line to select it (green), click elsewhere to deselect, Delete removes it,
 * a new parent replaces the old one,
-* drag on empty space pans, drag on a node moves it, input widgets keep working,
+* drag on empty space selects nodes, Ctrl / middle button drag pans, drag on a node moves it,
+  input widgets keep working,
 * right click: node menu (delete ...) and empty-space menu (add node at that point),
 * the view is disabled until a tree was created or loaded.
 """
@@ -796,21 +797,47 @@ def test_connection_menu_delete_connection(bt, dialogs, connected):
 
 
 # ============================================================================ panning
-def test_left_drag_on_empty_space_pans_opposite_to_drag(bt, pair):
+def test_ctrl_drag_on_empty_space_pans_opposite_to_drag(bt, pair):
     view = pair.view
     center = view.view_center()
     root_pos = pair.root._item.pos()
     start = empty_point(bt)
-    drag(bt, start, start + QPoint(120, 70))
+    drag(bt, start, start + QPoint(120, 70), modifiers=CTRL)
     moved = view.view_center() - center
     assert_points_close(moved, QPointF(-120, -70), 1.0)
     assert pair.root._item.pos() == root_pos  # nodes stay where they are in the scene
 
 
+def test_left_drag_on_empty_space_does_not_pan(bt, pair):
+    view = pair.view
+    center = view.view_center()
+    start = empty_point(bt)
+    drag(bt, start, start + QPoint(120, 70))
+    assert view.view_center() == center
+
+
+@pytest.mark.parametrize("where", ["title", "line"])
+def test_ctrl_drag_pans_also_over_nodes_and_lines(bt, connected, where):
+    view = connected.view
+    start = title_point(bt, connected.leaf) if where == "title" else line_point(bt, connected.item)
+    center = view.view_center()
+    leaf_pos = QPointF(connected.leaf._item.pos())
+    drag(bt, start, start + QPoint(-80, 50), modifiers=CTRL)
+    assert_points_close(view.view_center() - center, QPointF(80, -50), 1.0)
+    assert connected.leaf._item.pos() == leaf_pos  # panning is not moving
+    assert connected.leaf.GetParent() is connected.root
+    assert bt.GetSelectedNodes() == []  # a Ctrl + drag on a node does not toggle it
+
+
+def test_ctrl_drag_on_a_connection_label_still_connects(bt, pair):
+    drag(bt, label_point(bt, pair.root, CHILDREN), label_point(bt, pair.leaf, PARENT), modifiers=CTRL)
+    assert pair.leaf.GetParent() is pair.root
+
+
 def test_pan_moves_nodes_on_screen_with_the_cursor(bt, pair):
     before = title_point(bt, pair.leaf)
     start = empty_point(bt)
-    drag(bt, start, start + QPoint(-90, 40))
+    drag(bt, start, start + QPoint(-90, 40), modifiers=CTRL)
     after = title_point(bt, pair.leaf)
     assert after - before == QPoint(-90, 40)
 
@@ -822,18 +849,21 @@ def test_pan_keeps_grabbed_scene_point_under_cursor(bt, pair, zoom):
     assert pair.view.hit_test(start).kind == Hit.EMPTY
     grabbed = pair.view.mapToScene(start)
     end = start + QPoint(150, 90)
-    drag(bt, start, end, steps=6)
+    drag(bt, start, end, steps=6, modifiers=CTRL)
     assert_points_close(pair.view.mapToScene(end), grabbed, 1.0 / zoom + 0.01)
 
 
-def test_drag_starting_on_connection_line_pans(bt, connected):
-    """The line lies outside of any node: "clicking and dragging ... outside of any node should pan"."""
+def test_drag_starting_on_connection_line_selects_nodes_instead_of_panning(bt, connected):
+    """The line lies outside of any node: dragging from it draws a selection rectangle."""
     view = connected.view
     center = view.view_center()
     start = line_point(bt, connected.item)
     assert view.hit_test(start).kind == Hit.CONNECTION
-    drag(bt, start, start + QPoint(90, 40))
-    assert_points_close(view.view_center() - center, QPointF(-90, -40), 1.0)
+    end = view.mapFromScene(connected.leaf._item.sceneBoundingRect().center())
+    drag(bt, start, end)
+    assert view.view_center() == center
+    assert bt.GetSelectedNodes() == [connected.leaf]
+    assert view.selected_connection() is None  # a drag from the line selects nodes, not the line
     assert connected.leaf.GetParent() is connected.root
 
 
@@ -1040,7 +1070,7 @@ def test_view_gestures_work_after_closing_combo_popup_by_clicking_outside(qtbot,
     # the next gestures behave normally again: pan, then move the node
     center = bt.view().view_center()
     start = empty_point(bt)
-    drag(bt, start, start + QPoint(40, 30))
+    drag(bt, start, start + QPoint(40, 30), modifiers=CTRL)
     assert_points_close(bt.view().view_center() - center, QPointF(-40, -30), 1.0)
     pos = fields_node._item.pos()
     start = title_point(bt, fields_node)
@@ -1319,7 +1349,7 @@ def test_moving_nodes_works_while_executing(bt, executing):
 def test_panning_works_while_executing(bt, executing):
     center = executing.view.view_center()
     start = empty_point(bt)
-    drag(bt, start, start + QPoint(80, 50))
+    drag(bt, start, start + QPoint(80, 50), modifiers=CTRL)
     assert_points_close(executing.view.view_center() - center, QPointF(-80, -50), 1.0)
     center = executing.view.view_center()
     drag_with(bt, title_point(bt, executing.other), title_point(bt, executing.other) + QPoint(-30, 20), MIDDLE)

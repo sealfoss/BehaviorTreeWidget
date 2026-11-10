@@ -7,6 +7,7 @@ test can block; tests configure the answers they need through that fixture.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -15,15 +16,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if os.path.isdir("C:/Windows/Fonts"):
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
 
-import pytest  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox  # noqa: E402
+import pytest
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
-from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status  # noqa: E402
-from behavior_tree_widget.blackboard import BlackboardView  # noqa: E402
-from behavior_tree_widget.canvas import TreeView  # noqa: E402
-from behavior_tree_widget.demo import DEMO_NODE_TYPES  # noqa: E402
+from behavior_tree_widget import BehaviorTreeWidget, LeafNodeWidget, Status
+from behavior_tree_widget.blackboard import BlackboardView
+from behavior_tree_widget.canvas import TreeView
+from behavior_tree_widget.demo import DEMO_NODE_TYPES
+from behavior_tree_widget.serialization import blackboard_path_for, tree_file_paths
 
 
 # ============================================================================ test node types
@@ -190,6 +192,17 @@ class Dialogs:
         return [kind for kind, _ in self.shown]
 
 
+@pytest.fixture(autouse=True, scope="session")
+def log_folder(tmp_path_factory):
+    """The tree logs of the test-suite are written to a temporary folder, not to the folder the
+    tests are run from."""
+    folder = tmp_path_factory.mktemp("tree_logs")
+    previous = BehaviorTreeWidget.LOG_FOLDER
+    BehaviorTreeWidget.LOG_FOLDER = str(folder)
+    yield folder
+    BehaviorTreeWidget.LOG_FOLDER = previous
+
+
 @pytest.fixture(autouse=True)
 def dialogs(monkeypatch) -> Dialogs:
     state = Dialogs()
@@ -267,10 +280,21 @@ def make_widget(qtbot):
 
 @pytest.fixture
 def bt(make_widget, tmp_path):
-    """A shown BehaviorTreeWidget holding a new tree stored in tmp_path/tree.json."""
+    """A shown BehaviorTreeWidget holding a new tree stored in tmp_path/tree_BT.json (its
+    blackboard in tmp_path/tree_BB.json)."""
     widget = make_widget()
     assert widget.NewTree(str(tmp_path / "tree.json"))
     return widget
+
+
+@pytest.fixture
+def widget(bt):
+    """``bt`` with the leaf node types of tests/support registered (each has a type name of its own)."""
+    from support import regression_node_types
+
+    for cls in regression_node_types():
+        bt.RegisterNodeType(cls)
+    return bt
 
 
 # ============================================================================ helpers
@@ -288,15 +312,22 @@ def label_point(bt: BehaviorTreeWidget, node, kind: str) -> QPoint:
     return viewport_point(bt, node, node.connection_label(kind))
 
 
-def drag(bt: BehaviorTreeWidget, start: QPoint, end: QPoint, steps: int = 4, release: bool = True) -> None:
-    """Press at ``start``, move to ``end`` in ``steps`` and release (left button) on the viewport."""
+def drag(
+    bt: BehaviorTreeWidget,
+    start: QPoint,
+    end: QPoint,
+    steps: int = 4,
+    release: bool = True,
+    modifiers=Qt.KeyboardModifier.NoModifier,
+) -> None:
+    """Press at ``start`` (holding ``modifiers``), move to ``end`` in ``steps`` and release (left button) on the viewport."""
     viewport = bt.view().viewport()
-    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, modifiers, start)
     for step in range(1, steps + 1):
         point = start + (end - start) * (step / steps)
         QTest.mouseMove(viewport, QPoint(round(point.x()), round(point.y())))
     if release:
-        QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, modifiers, end)
 
 
 def click(bt: BehaviorTreeWidget, point: QPoint, button=Qt.MouseButton.LeftButton) -> None:
@@ -315,3 +346,58 @@ def fast_config(bt: BehaviorTreeWidget, **changes) -> None:
     for key, value in changes.items():
         setattr(config, key, value)
     bt.SetConfig(config)
+
+
+def file_blackboard(path) -> list | None:
+    """The blackboard stored for the tree file at ``path``: the entries of its blackboard file
+    (``<name>_BB.json``), or the "blackboard" section of a single-file tree of an earlier version
+    when there is no blackboard file. ``path`` may also be the blackboard file itself."""
+    blackboard_path = blackboard_path_for(str(path))
+    if os.path.exists(blackboard_path):
+        with open(blackboard_path, encoding="utf-8") as stream:
+            return json.load(stream).get("blackboard")
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream).get("blackboard")
+
+
+def read_json(path) -> dict:
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def tree_file(path) -> str:
+    """The tree file (``<name>_BT.json``) written by SaveTree / NewTree for ``path``."""
+    return tree_file_paths(str(path))[0]
+
+
+def assert_blackboard_in_file(bt: BehaviorTreeWidget, timeout: float = 3.0) -> None:
+    """Wait until the blackboard file holds the current blackboard; nothing is then left unsaved by it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        QApplication.processEvents()
+        if file_blackboard(bt.GetFilePath()) == bt.blackboard_store().to_list(quiet=True):
+            break
+        assert time.monotonic() < deadline, "the blackboard was not written to the blackboard file"
+        time.sleep(0.01)
+    assert not bt.IsModified(), "blackboard changes are written to the file, they are not unsaved changes"
+
+
+# ============================================================================ GitHub Actions
+def _escape_annotation(text: str, property_value: bool = False) -> str:
+    """``text`` escaped for a GitHub Actions workflow command (a property value escapes more)."""
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if property_value else text
+
+
+def pytest_terminal_summary(terminalreporter):
+    """On GitHub Actions, annotate the run with each failure, so that it can be read without the
+    job's log (which only signed-in users can open), e.g. through the checks API."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    for report in terminalreporter.stats.get("failed", []) + terminalreporter.stats.get("error", []):
+        path, line, _ = report.location
+        message = "\n".join(report.longreprtext.splitlines()[-40:])[-3000:]
+        terminalreporter.write_line(
+            f"::error file={_escape_annotation(str(path).replace(os.sep, '/'), True)},line={(line or 0) + 1},"
+            f"title={_escape_annotation(report.nodeid, True)}::{_escape_annotation(message)}"
+        )

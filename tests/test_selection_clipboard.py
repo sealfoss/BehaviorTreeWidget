@@ -21,9 +21,9 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QByteArray, QMimeData, QPoint, QPointF, QRectF, Qt
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QContextMenuEvent, QGuiApplication, QKeySequence
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QApplication, QLineEdit
 
 from behavior_tree_widget import (
     EvaluationNodeWidget,
@@ -146,7 +146,7 @@ def test_click_on_empty_space_deselects(bt, three):
 def test_panning_keeps_the_selection(bt, three):
     bt.SelectNodes([three.a])
     center = three.view.view_center()
-    drag(bt, three.empty, three.empty + QPoint(60, -30))
+    drag(bt, three.empty, three.empty + QPoint(60, -30), modifiers=CTRL)
     assert three.view.view_center() != center
     assert bt.GetSelectedNodes() == [three.a]
     middle = Qt.MouseButton.MiddleButton
@@ -176,8 +176,8 @@ def test_ctrl_a_selects_every_node(bt, three):
     assert bt.GetSelectedNodes() == bt.GetNodes()
 
 
-@pytest.mark.parametrize("modifier", [CTRL, SHIFT])
-def test_dragging_a_rectangle_selects_the_nodes_it_touches(bt, three, modifier):
+def test_shift_dragging_a_rectangle_adds_the_nodes_it_touches(bt, three):
+    modifier = SHIFT
     bt.SelectNodes([three.c])
     viewport = three.view.viewport()
     start = scene_point(bt, -350, 200)
@@ -195,6 +195,56 @@ def test_dragging_a_rectangle_selects_the_nodes_it_touches(bt, three, modifier):
     assert set(bt.GetSelectedNodes()) == {three.a, three.c}
     assert [item for item in three.view.scene().items() if isinstance(item, SelectionBandItem)] == []
     assert three.view.view_center() == center  # no panning
+
+
+def test_dragging_on_empty_space_selects_the_nodes_it_touches(bt, three):
+    """A plain drag replaces the selection with the nodes the rectangle touches."""
+    bt.SelectNodes([three.c])
+    viewport = three.view.viewport()
+    start = scene_point(bt, -350, 200)
+    end = scene_point(bt, rect(three.b).left() + 5, rect(three.b).top() + 5)  # touches b's corner
+    assert three.view.hit_test(start).kind == Hit.EMPTY
+    center = three.view.view_center()
+    QTest.mousePress(viewport, LEFT, NO_MOD, start)
+    assert bt.GetSelectedNodes() == []
+    QTest.mouseMove(viewport, end)
+    bands = [item for item in three.view.scene().items() if isinstance(item, SelectionBandItem)]
+    assert len(bands) == 1 and bands[0].isVisible()
+    assert set(bt.GetSelectedNodes()) == {three.a, three.b}
+    QTest.mouseRelease(viewport, LEFT, NO_MOD, end)
+    assert set(bt.GetSelectedNodes()) == {three.a, three.b}
+    assert [item for item in three.view.scene().items() if isinstance(item, SelectionBandItem)] == []
+    assert three.view.view_center() == center  # no panning
+
+
+def test_a_rectangle_selects_nodes_in_any_drag_direction(bt, three):
+    start = scene_point(bt, rect(three.c).right() + 40, rect(three.c).bottom() + 40)
+    end = scene_point(bt, rect(three.b).center().x(), rect(three.b).top() - 40)
+    drag(bt, start, end)
+    assert set(bt.GetSelectedNodes()) == {three.b, three.c}
+
+
+def test_ctrl_drag_pans_and_keeps_the_selection(bt, three):
+    bt.SelectNodes([three.a])
+    center = three.view.view_center()
+    drag(bt, title_point(bt, three.b), title_point(bt, three.b) + QPoint(-70, 40), modifiers=CTRL)
+    assert three.view.view_center() != center
+    assert bt.GetSelectedNodes() == [three.a]  # b was not toggled
+
+
+def test_ctrl_click_moving_less_than_the_drag_distance_still_toggles(bt, three):
+    start = title_point(bt, three.b)
+    center = three.view.view_center()
+    drag(bt, start, start + QPoint(QApplication.startDragDistance() - 2, 0), steps=2, modifiers=CTRL)
+    assert bt.GetSelectedNodes() == [three.b]
+    assert three.view.view_center() == center
+
+
+@pytest.mark.parametrize("modifier", [CTRL, SHIFT])
+def test_a_rectangle_click_without_dragging_keeps_the_selection_with_modifiers(bt, three, modifier):
+    bt.SelectNodes([three.b])
+    QTest.mouseClick(three.view.viewport(), LEFT, modifier, three.empty)
+    assert bt.GetSelectedNodes() == [three.b]
 
 
 def test_a_rectangle_click_without_dragging_keeps_the_selection(bt, three):
@@ -266,6 +316,170 @@ def test_selection_works_while_executing(qtbot, bt, three):
         assert bt.GetSelectedNodes() == [three.a, three.b]
     finally:
         bt.Stop()
+
+
+# ============================================================================ select children
+@pytest.fixture
+def subtree(bt, three):
+    """``three`` plus root -> seq -> (a, neg -> b); c stays unconnected."""
+    seq = bt.AddNode("Sequence", -150, 120)
+    neg = bt.AddNode("Negation", 150, 120)
+    bt.Connect(three.root, seq)
+    bt.Connect(seq, three.a)
+    bt.Connect(seq, neg)
+    bt.Connect(neg, three.b)
+    three.seq, three.neg = seq, neg
+    return three
+
+
+def menu_action(menu, name: str) -> QAction:
+    for candidate in menu.actions():
+        if candidate.objectName() == name:
+            return candidate
+    raise AssertionError(f"menu has no action named {name!r}: {[a.objectName() for a in menu.actions()]}")
+
+
+def test_select_children_selects_the_node_and_all_its_descendants(bt, dialogs, subtree):
+    bt.SelectNodes([subtree.c])  # replaced
+    dialogs.menu_handler = lambda menu: menu_action(menu, "SelectChildren").trigger()
+    viewport = subtree.view.viewport()
+    point = title_point(bt, subtree.seq)
+    QApplication.sendEvent(viewport, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, viewport.mapToGlobal(point)))
+    assert [menu.objectName() for menu in dialogs.menus] == ["NodeMenu"]
+    assert set(bt.GetSelectedNodes()) == {subtree.seq, subtree.a, subtree.neg, subtree.b}
+
+
+def test_select_children_of_the_root_selects_the_whole_connected_tree(bt, subtree):
+    menu = subtree.view.build_node_menu(subtree.root)
+    menu_action(menu, "SelectChildren").trigger()
+    assert set(bt.GetSelectedNodes()) == {subtree.root, subtree.seq, subtree.a, subtree.neg, subtree.b}
+    menu.deleteLater()
+
+
+def test_select_children_is_disabled_without_children_and_absent_on_leaves(bt, three):
+    seq = bt.AddNode("Sequence", -150, 120)
+    menu = three.view.build_node_menu(seq)
+    select_children = menu_action(menu, "SelectChildren")
+    assert select_children.text() == "Select Children"
+    assert not select_children.isEnabled()
+    menu.deleteLater()
+    menu = three.view.build_node_menu(three.a)
+    assert "SelectChildren" not in [a.objectName() for a in menu.actions()]
+    menu.deleteLater()
+
+
+def test_select_children_works_while_executing(bt, subtree):
+    bt.Connect(subtree.root, bt.AddNode("SlowCancelable", -600, 250))
+    fast_config(bt)
+    bt.Execute()
+    try:
+        menu = subtree.view.build_node_menu(subtree.neg)
+        assert menu_action(menu, "SelectChildren").isEnabled()
+        menu_action(menu, "SelectChildren").trigger()
+        assert set(bt.GetSelectedNodes()) == {subtree.neg, subtree.b}
+        menu.deleteLater()
+    finally:
+        bt.Stop()
+
+
+# ============================================================================ delete
+@pytest.mark.parametrize("key_code", [Qt.Key.Key_Delete, Qt.Key.Key_Backspace], ids=["Delete", "Backspace"])
+def test_delete_key_deletes_the_selected_nodes(bt, subtree, key_code):
+    bt._set_modified(False)
+    click_node(bt, subtree.neg)
+    click_node(bt, subtree.c, CTRL)
+    key(bt, key_code)
+    assert set(bt.GetNodes()) == {subtree.root, subtree.seq, subtree.a, subtree.b}
+    assert bt.GetSelectedNodes() == []
+    assert subtree.seq.GetChildren() == [subtree.a]
+    assert subtree.b.GetParent() is None  # the children of a deleted node are kept, unconnected
+    assert bt.IsModified()
+
+
+def test_delete_key_keeps_the_root_but_deletes_its_connections(bt, subtree):
+    bt.SelectNodes([subtree.root])
+    subtree.view.setFocus()
+    key(bt, Qt.Key.Key_Delete)
+    assert subtree.root in bt.GetNodes()
+    assert subtree.root.GetChildren() == []
+    assert subtree.seq.GetParent() is None
+    assert len(bt.GetNodes()) == 6  # no node was deleted
+    assert subtree.neg.GetParent() is subtree.seq  # connections below the root's children stay
+    assert bt.GetSelectedNodes() == [subtree.root]
+
+
+def test_delete_key_after_selecting_everything_leaves_only_the_root(bt, subtree):
+    subtree.view.setFocus()
+    key(bt, Qt.Key.Key_A, CTRL)
+    key(bt, Qt.Key.Key_Delete)
+    assert bt.GetNodes() == [subtree.root]
+    assert subtree.root.GetChildren() == []
+    assert subtree.view.connections() == []
+
+
+def test_delete_key_deletes_a_box_selection(bt, subtree):
+    start = scene_point(bt, rect(subtree.c).right() + 40, rect(subtree.c).bottom() + 40)
+    end = scene_point(bt, rect(subtree.b).center().x(), rect(subtree.b).center().y())  # below neg
+    drag(bt, start, end)
+    assert set(bt.GetSelectedNodes()) == {subtree.b, subtree.c}
+    key(bt, Qt.Key.Key_Delete)
+    assert set(bt.GetNodes()) == {subtree.root, subtree.seq, subtree.a, subtree.neg}
+    assert subtree.neg.GetChildren() == []
+
+
+def test_delete_key_deletes_the_selected_connection_and_nodes_together(bt, subtree):
+    line = subtree.view.connection_item(subtree.a)
+    subtree.view.select_connection(line)
+    bt.SelectNodes([subtree.c])
+    subtree.view.setFocus()
+    key(bt, Qt.Key.Key_Delete)
+    assert subtree.a.GetParent() is None
+    assert subtree.a in bt.GetNodes()
+    assert subtree.c not in bt.GetNodes()
+    assert subtree.view.selected_connection() is None
+
+
+def test_delete_key_deletes_nothing_while_executing(bt, subtree):
+    bt.Connect(subtree.root, bt.AddNode("SlowCancelable", -600, 250))
+    nodes = bt.GetNodes()
+    fast_config(bt)
+    bt.Execute()
+    try:
+        subtree.view.setFocus()
+        key(bt, Qt.Key.Key_A, CTRL)
+        key(bt, Qt.Key.Key_Delete)
+        key(bt, Qt.Key.Key_Backspace)
+        assert bt.GetNodes() == nodes
+        assert subtree.root.GetChildren() and subtree.neg.GetChildren() == [subtree.b]
+    finally:
+        bt.Stop()
+
+
+def test_delete_key_in_a_focused_field_edits_text_not_nodes(bt, three):
+    node = bt.AddNode("AllFields", 0, 420)
+    bt.SelectNodes([three.a, node])
+    editor = node.field_editor("label")
+    click(bt, viewport_point(bt, node, editor))
+    key(bt, Qt.Key.Key_Home)
+    key(bt, Qt.Key.Key_Delete)
+    assert node.GetField("label") == "ello"
+    assert three.a in bt.GetNodes() and node in bt.GetNodes()
+
+
+def test_application_delete_shortcut_does_not_take_the_key_from_a_selection(bt, three):
+    """A window-wide Delete action does not steal the key while nodes are selected, only otherwise."""
+    triggered = []
+    shortcut = QAction(bt)
+    shortcut.setShortcut(QKeySequence(Qt.Key.Key_Delete))
+    shortcut.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+    shortcut.triggered.connect(lambda _=False: triggered.append(True))
+    bt.addAction(shortcut)
+    click_node(bt, three.a)
+    key(bt, Qt.Key.Key_Delete)
+    assert three.a not in bt.GetNodes()
+    assert triggered == []
+    key(bt, Qt.Key.Key_Delete)  # nothing selected: the application gets the key
+    assert triggered == [True]
 
 
 # ============================================================================ copy / paste
@@ -574,7 +788,7 @@ def test_evaluation_copy_follows_the_blackboard(bt):
     bt.view().setFocus()
     [copy] = copy_paste(bt)
     assert isinstance(copy, EvaluationNodeWidget)
-    bt.blackboardStore().rename("x", "y")
+    bt.blackboard_store().rename("x", "y")
     assert copy.GetValueName() == "y" and node.GetValueName() == "y"
 
 
@@ -596,7 +810,8 @@ def test_copied_nodes_do_not_crash_the_process_at_exit(tmp_path):
         print("copied")
     """), encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, str(script), str(tmp_path / "tree.json")], capture_output=True, text=True, timeout=120
+        [sys.executable, str(script), str(tmp_path / "tree.json")], capture_output=True, text=True, timeout=120,
+        cwd=str(tmp_path),  # its log file goes there
     )
     assert "copied" in result.stdout, result.stderr
     assert result.returncode == 0, f"exit code {result.returncode}: {result.stderr}"

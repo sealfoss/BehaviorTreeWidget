@@ -97,8 +97,10 @@ class Blink(LeafNodeWidget):
 
 def build_sample_tree(widget: BehaviorTreeWidget) -> None:
     """Root(Sequence) -> [Selector -> [Check Battery, Charge], Drive, Blink]."""
-    path = os.path.join(tempfile.gettempdir(), "behavior_tree_widget_example.json")
-    widget.NewTree(path)  # creates the file, enables the editor and sets the window title
+    # The tree is stored in behavior_tree_widget_example_BT.json and its blackboard in
+    # behavior_tree_widget_example_BB.json.
+    path = os.path.join(tempfile.gettempdir(), "behavior_tree_widget_example_BT.json")
+    widget.NewTree(path)  # creates the files, enables the editor and sets the window title
 
     root = widget.GetRootNode()
     ensure_power = widget.AddNode("Selector", -380, 170)
@@ -126,7 +128,7 @@ class MainWindow(QMainWindow):
         # New/Load replace the blackboard, so (re)create the entries the nodes need.
         self.tree.treeLoaded.connect(lambda _path: ensure_entries(self.tree))
 
-    def closeEvent(self, event):  # noqa: N802 - Qt API
+    def closeEvent(self, event):
         # Offer to save unsaved changes, then stop execution and release resources.
         if not self.tree.ConfirmDiscardChanges():
             event.ignore()

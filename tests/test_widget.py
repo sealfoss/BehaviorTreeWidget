@@ -21,7 +21,16 @@ import py_trees
 import pytest
 import shiboken6
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QFrame, QLabel, QMainWindow, QMessageBox, QPushButton, QScrollArea, QTabWidget, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+    QWidget,
+)
 
 from behavior_tree_widget import (
     BehaviorTreeWidget,
@@ -37,12 +46,20 @@ from behavior_tree_widget import (
     register_node_type,
     registered_node_types,
 )
-from behavior_tree_widget import widget as widget_module
+from behavior_tree_widget import (
+    widget as widget_module,
+)
 from behavior_tree_widget.blackboard import BlackboardView
 from behavior_tree_widget.canvas import TreeView
 from behavior_tree_widget.config import ConfigureDialog
 from behavior_tree_widget.demo import DEMO_NODE_TYPES, DemoWindow
-from behavior_tree_widget.serialization import FORMAT_NAME, FORMAT_VERSION, read_tree_file
+from behavior_tree_widget.serialization import (
+    BLACKBOARD_FORMAT_NAME,
+    FORMAT_NAME,
+    FORMAT_VERSION,
+    read_blackboard_file,
+    read_tree_file,
+)
 
 from conftest import (
     TEST_NODE_TYPES,
@@ -50,6 +67,7 @@ from conftest import (
     FailNode,
     SlowCancelable,
     Succeed,
+    assert_blackboard_in_file,
     click,
     drag,
     fast_config,
@@ -297,8 +315,8 @@ RICH_CONFIG = TreeConfig(tick_interval_ms=250, repeat=True, restore_blackboard=T
 def round_trip(bt, make_widget, tmp_path):
     """(original widget, freshly loaded widget, saved path, original nodes) after a save / load cycle."""
     nodes = build_rich_tree(bt)
-    path = str(tmp_path / "rich.json")
-    assert bt.SaveTree(path)
+    assert bt.SaveTree(str(tmp_path / "rich.json"))
+    path = str(tmp_path / "rich_BT.json")  # the tree file; its blackboard is in rich_BB.json
     loaded = make_widget()
     assert loaded.LoadTree(path)
     return bt, loaded, path, nodes
@@ -315,7 +333,7 @@ def test_widget_is_tab_widget_with_tree_and_blackboard_tabs(make_widget):
 def test_blackboard_tab_hosts_blackboard_view(make_widget):
     widget = make_widget()
     page = widget.widget(1)
-    assert page is widget.blackboardView()
+    assert page is widget.blackboard_view()
     assert isinstance(page, BlackboardView)
     assert page.findChild(QScrollArea, "EntryList") is not None
 
@@ -379,16 +397,20 @@ def test_execute_does_nothing_before_a_tree_exists(make_widget, dialogs):
 # ============================================================================ New
 def test_new_via_button_creates_valid_tree_file(make_widget, dialogs, tmp_path):
     widget = make_widget()
-    path = tmp_path / "created.json"
-    dialogs.save_path = str(path)
+    dialogs.save_path = str(tmp_path / "created.json")
     widget.button("New").click()
 
+    path = tmp_path / "created_BT.json"  # the tree file named after the chosen name
     assert path.is_file()
+    assert not (tmp_path / "created.json").exists()
     data = read_tree_file(str(path))  # validates the format
     assert data["format"] == FORMAT_NAME
     assert data["version"] == FORMAT_VERSION
     assert [node["type"] for node in data["nodes"]] == ["Root"]
     assert data["connections"] == []
+    assert "blackboard" not in data
+    assert read_json(tmp_path / "created_BB.json")["format"] == BLACKBOARD_FORMAT_NAME
+    assert read_blackboard_file(str(tmp_path / "created_BB.json")) == []  # validates the format
     assert widget.IsTreeLoaded() is True
     assert widget.view().isEnabled() is True
     assert widget.GetFilePath() == os.path.abspath(str(path))
@@ -406,7 +428,7 @@ def test_new_sets_title_of_top_level_widget(make_widget, dialogs, tmp_path, file
     dialogs.save_path = str(tmp_path / filename)
     widget.button("New").click()
     assert widget.isWindow()
-    assert widget.windowTitle() == expected_title(filename)
+    assert widget.windowTitle() == expected_title(filename.removesuffix(".json") + "_BT.json")
 
 
 def test_new_file_dialog_offers_json_filter(make_widget, dialogs):
@@ -454,19 +476,27 @@ def test_new_cancelled_keeps_current_tree(saved_bt, dialogs):
 def test_json_extension_appended_when_name_has_none(bt, dialogs, tmp_path, button):
     dialogs.save_path = str(tmp_path / "noext")
     bt.button(button).click()
-    expected = tmp_path / "noext.json"
+    expected = tmp_path / "noext_BT.json"
     assert expected.is_file()
+    assert (tmp_path / "noext_BB.json").is_file()
     assert not (tmp_path / "noext").exists()
+    assert not (tmp_path / "noext.json").exists()
     assert bt.GetFilePath() == os.path.abspath(str(expected))
-    assert bt.windowTitle() == expected_title("noext.json")
+    assert bt.GetBlackboardFilePath() == os.path.abspath(str(tmp_path / "noext_BB.json"))
+    assert bt.windowTitle() == expected_title("noext_BT.json")
 
 
 def test_existing_extension_is_kept(bt, dialogs, tmp_path):
+    # A name with another extension is the tree's name, extension included: no ".json" is
+    # appended to it and it is not cut off.
     dialogs.save_path = str(tmp_path / "tree.bt")
     bt.button("Save").click()
-    assert (tmp_path / "tree.bt").is_file()
+    assert (tmp_path / "tree.bt_BT.json").is_file()
+    assert (tmp_path / "tree.bt_BB.json").is_file()
+    assert not (tmp_path / "tree.bt").exists()
     assert not (tmp_path / "tree.bt.json").exists()
-    assert bt.windowTitle() == expected_title("tree.bt")
+    assert not (tmp_path / "tree.bt.json_BT.json").exists()
+    assert bt.windowTitle() == expected_title("tree.bt_BT.json")
 
 
 def test_new_replaces_tree_and_clears_blackboard(bt, qtbot, tmp_path):
@@ -478,14 +508,15 @@ def test_new_replaces_tree_and_clears_blackboard(bt, qtbot, tmp_path):
     path = str(tmp_path / "second.json")
     with qtbot.waitSignal(bt.treeLoaded, timeout=1000) as blocker:
         assert bt.NewTree(path)
-    assert blocker.args == [os.path.abspath(path)]
+    assert blocker.args == [os.path.abspath(str(tmp_path / "second_BT.json"))]
     assert len(bt.GetNodes()) == 1
     assert isinstance(bt.GetRootNode(), RootNodeWidget)
     assert bt.GetRootNode().GetId() != old_root_id
     assert not bt.HasEntry("cleared")
     assert bt.GetEntry("kept") is marker  # Object entries (run-time objects) are kept
-    assert read_json(path)["blackboard"] == []
-    assert bt.windowTitle() == expected_title("second.json")
+    assert read_json(tmp_path / "second_BB.json")["blackboard"] == []
+    assert "blackboard" not in read_json(tmp_path / "second_BT.json")
+    assert bt.windowTitle() == expected_title("second_BT.json")
     assert bt.IsModified() is False
 
 
@@ -503,7 +534,7 @@ def test_new_sets_title_of_main_window(main_window, dialogs, tmp_path):
     dialogs.save_path = str(tmp_path / "main.json")
     tree.button("New").click()
     assert tree.IsTreeLoaded()
-    assert window.windowTitle() == expected_title("main.json")
+    assert window.windowTitle() == expected_title("main_BT.json")
 
 
 def test_load_sets_title_of_main_window(main_window, dialogs, tmp_path):
@@ -521,7 +552,7 @@ def test_save_as_updates_title_of_main_window(main_window, dialogs, tmp_path):
     assert tree.NewTree(str(tmp_path / "first.json"))
     dialogs.save_path = str(tmp_path / "second.json")
     tree.button("Save").click()
-    assert window.windowTitle() == expected_title("second.json")
+    assert window.windowTitle() == expected_title("second_BT.json")
 
 
 def test_title_applied_when_widget_is_embedded_after_new(qtbot, tmp_path):
@@ -532,7 +563,7 @@ def test_title_applied_when_widget_is_embedded_after_new(qtbot, tmp_path):
         assert tree.NewTree(str(tmp_path / "early.json"))
         window.setCentralWidget(tree)
         window.show()
-        qtbot.waitUntil(lambda: window.windowTitle() == expected_title("early.json"), timeout=1000)
+        qtbot.waitUntil(lambda: window.windowTitle() == expected_title("early_BT.json"), timeout=1000)
         qtbot.wait(20)  # let deferred work queued by showEvent run while the window still exists
     finally:
         tree.Shutdown()
@@ -694,15 +725,18 @@ def test_load_replaces_blackboard_entries_but_keeps_objects(make_widget, tmp_pat
 def test_save_via_dialog_to_new_name(bt, dialogs, qtbot, tmp_path):
     leaf = bt.AddNode("Succeed", 100, 200)
     assert bt.IsModified()
-    target = tmp_path / "renamed.json"
-    dialogs.save_path = str(target)
+    dialogs.save_path = str(tmp_path / "renamed.json")
     with qtbot.waitSignal(bt.treeSaved, timeout=1000) as blocker:
         bt.button("Save").click()
+    target = tmp_path / "renamed_BT.json"
     assert target.is_file()
+    assert not (tmp_path / "renamed.json").exists()
     assert leaf.GetId() in saved_ids(target)
     read_tree_file(str(target))
+    read_blackboard_file(str(tmp_path / "renamed_BB.json"))
     assert bt.GetFilePath() == os.path.abspath(str(target))
-    assert bt.windowTitle() == expected_title("renamed.json")
+    assert bt.GetBlackboardFilePath() == os.path.abspath(str(tmp_path / "renamed_BB.json"))
+    assert bt.windowTitle() == expected_title("renamed_BT.json")
     assert bt.IsModified() is False
     assert blocker.args == [os.path.abspath(str(target))]
 
@@ -736,12 +770,12 @@ def test_save_skips_blackboard_values_that_cannot_be_saved(bt, caplog, dialogs, 
     bt.SetEntry(object(), "runtime_object")  # Object entries are run-time values, never saved
     bt.SetEntry([1, 2], "items")
     bt.SetEntry(4, "number")
-    with bt.blackboardStore()._lock:
+    with bt.blackboard_store()._lock:
         # A List whose value cannot be written as JSON (bytes) is skipped with a warning.
-        bt.blackboardStore()._client.set(bt.blackboardStore().key("items"), [b"raw"], overwrite=True)
+        bt.blackboard_store()._client.set(bt.blackboard_store().key("items"), [b"raw"], overwrite=True)
     with caplog.at_level("WARNING", logger="behavior_tree_widget"):
         assert bt.SaveTree(bt.GetFilePath()) is True
-    entries = read_json(bt.GetFilePath())["blackboard"]
+    entries = read_json(bt.GetBlackboardFilePath())["blackboard"]
     assert entries == [{"name": "number", "type": "Integer", "value": 4}]
     assert any("items" in record.getMessage() for record in caplog.records)
     assert not any("runtime_object" in record.getMessage() for record in caplog.records)
@@ -757,8 +791,9 @@ def test_save_on_fresh_widget_counts_as_loaded(make_widget, tmp_path):
     assert widget.SaveTree(path)
     assert widget.IsTreeLoaded() is True
     assert widget.view().isEnabled() is True
-    assert widget.GetFilePath() == os.path.abspath(path)
-    assert widget.windowTitle() == expected_title("saved_first.json")
+    assert widget.GetFilePath() == os.path.abspath(str(tmp_path / "saved_first_BT.json"))
+    assert widget.GetBlackboardFilePath() == os.path.abspath(str(tmp_path / "saved_first_BB.json"))
+    assert widget.windowTitle() == expected_title("saved_first_BT.json")
 
 
 def test_programmatic_save_to_unwritable_location_raises(bt, dialogs, tmp_path):
@@ -773,11 +808,11 @@ def test_programmatic_save_to_unwritable_location_raises(bt, dialogs, tmp_path):
 
 
 def test_programmatic_save_onto_directory_raises_and_leaves_no_temp_file(bt, tmp_path):
-    folder = tmp_path / "folder"
+    folder = tmp_path / "folder_BT.json"  # a directory where the tree file is to be written
     folder.mkdir()
     with pytest.raises(OSError):
         bt.SaveTree(str(folder))
-    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["folder", "tree.json"]
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["folder_BT.json", "tree_BB.json", "tree_BT.json"]
     assert list(folder.iterdir()) == []
 
 
@@ -899,11 +934,13 @@ def test_round_trip_view_center(round_trip):
 
 def test_round_trip_resave_is_identical(round_trip, tmp_path):
     original, loaded, path, nodes = round_trip
-    second = str(tmp_path / "resaved.json")
-    assert loaded.SaveTree(second)
+    assert loaded.SaveTree(str(tmp_path / "resaved.json"))
+    second = str(tmp_path / "resaved_BT.json")
     first_data, second_data = read_json(path), read_json(second)
-    for key in ("format", "version", "config", "blackboard", "connections"):
+    for key in ("format", "version", "config", "connections"):
         assert second_data[key] == first_data[key], key
+    assert read_json(tmp_path / "resaved_BB.json") == read_json(tmp_path / "rich_BB.json")
+    assert read_json(tmp_path / "rich_BB.json")["blackboard"]  # the blackboard was saved at all
     assert sorted(second_data["nodes"], key=lambda n: n["id"]) == sorted(first_data["nodes"], key=lambda n: n["id"])
     assert second_data["view"]["zoom"] == first_data["view"]["zoom"]
 
@@ -956,7 +993,7 @@ def test_unknown_node_type_creates_placeholder_and_warns(make_widget, dialogs, t
 
     assert widget.IsTreeLoaded()
     assert "warning" in dialogs.kinds()
-    warning_args = [args for kind, args in dialogs.shown if kind == "warning"][0]
+    warning_args = next(args for kind, args in dialogs.shown if kind == "warning")
     assert any("Mystery" in str(arg) for arg in warning_args)
     node = node_by_id(widget, "m")
     assert isinstance(node, UnknownLeafNodeWidget)
@@ -979,8 +1016,8 @@ def test_unknown_node_type_programmatic_load_logs_warning(make_widget, dialogs, 
 def test_resaving_unknown_node_preserves_type_and_fields(make_widget, tmp_path, clean_registry):
     widget = make_widget(node_types=[Succeed])
     assert widget.LoadTree(unknown_type_file(tmp_path))
-    out = tmp_path / "resaved.json"
-    assert widget.SaveTree(str(out))
+    assert widget.SaveTree(str(tmp_path / "resaved.json"))
+    out = tmp_path / "resaved_BT.json"
 
     [saved] = [node for node in read_json(out)["nodes"] if node["id"] == "m"]
     assert saved["type"] == "Mystery"
@@ -1138,9 +1175,11 @@ EDITS = {
     "SetFieldSelectionIndex": lambda bt, connected, loose: connected.SetFieldSelectionIndex("choice", 1),
     "SetCompositeType": lambda bt, connected, loose: bt.GetRootNode().SetCompositeType("Selector"),
     "SetMemory": lambda bt, connected, loose: bt.GetRootNode().SetMemory(False),
-    "SetEntry": lambda bt, connected, loose: bt.SetEntry(3, "counter"),
-    "AddEntry": lambda bt, connected, loose: bt.AddEntry("names", "List", ["a"]),
     "SetConfig": lambda bt, connected, loose: fast_config(bt),
+}
+BLACKBOARD_EDITS = {
+    "SetEntry": lambda bt: bt.SetEntry(3, "counter"),
+    "AddEntry": lambda bt: bt.AddEntry("names", "List", ["a"]),
 }
 
 
@@ -1152,6 +1191,16 @@ def test_edits_mark_tree_modified(saved_bt, edit):
     EDITS[edit](bt, connected, loose)
     assert bt.IsModified() is True
     assert changes == [True]
+
+
+@pytest.mark.parametrize("edit", list(BLACKBOARD_EDITS))
+def test_blackboard_edits_are_written_to_the_tree_file(saved_bt, edit):
+    bt, connected, loose = saved_bt
+    changes = []
+    bt.modifiedChanged.connect(changes.append)
+    BLACKBOARD_EDITS[edit](bt)
+    assert_blackboard_in_file(bt)
+    assert changes == []
 
 
 def test_memory_menu_action_marks_modified(saved_bt):
@@ -1283,6 +1332,8 @@ def test_load_and_new_honour_cancel(saved_bt, dialogs, tmp_path, button):
     assert bt.windowTitle() == title
     assert bt.IsModified() is True
     assert not (tmp_path / "fresh.json").exists()
+    assert not (tmp_path / "fresh_BT.json").exists()
+    assert not (tmp_path / "fresh_BB.json").exists()
 
 
 @pytest.mark.parametrize("button", ["Load", "New"])
@@ -1294,7 +1345,8 @@ def test_load_and_new_after_discard(saved_bt, dialogs, tmp_path, button):
     dialogs.save_path = str(tmp_path / "fresh.json")
     dialogs.question_answer = DISCARD
     bt.button(button).click()
-    expected = "other.json" if button == "Load" else "fresh.json"
+    # A loaded single file (as written by earlier versions) keeps its name; New writes fresh_BT.json.
+    expected = "other.json" if button == "Load" else "fresh_BT.json"
     assert dialogs.kinds() == ["question", "open_dialog" if button == "Load" else "save_dialog"]
     assert bt.GetFilePath() == os.path.abspath(str(tmp_path / expected))
     assert bt.windowTitle() == expected_title(expected)
@@ -1365,7 +1417,7 @@ def test_load_or_new_while_executing_stops_execution_first(qtbot, bt, dialogs, t
     assert states == [("Idle", True)], "execution must stop while the old tree is still in place"
     assert runner.terminated == [NodeStatus.READY]
     assert bt.view().is_locked() is False
-    assert bt.GetFilePath() == os.path.abspath(other if "Load" in operation else fresh)
+    assert bt.GetFilePath() == os.path.abspath(other if "Load" in operation else str(tmp_path / "fresh_BT.json"))
     assert runner not in bt.GetNodes()
     assert bt.button("Execute").isEnabled() and not bt.button("Stop").isEnabled()
     assert not bt.button("Pause").isEnabled()
@@ -1579,11 +1631,14 @@ def test_widget_registration_is_local_to_the_widget(make_widget, clean_registry)
 def test_get_node_types_lists_composites_then_sorted_leaves(make_widget, clean_registry):
     widget = make_widget(node_types=[Succeed, FailNode, AllFields])
     assert widget.GetNodeTypes() == [
-        "Sequence", "Selector", "Negation", "Evaluation", "Set", "AllFields", "FailNode", "Succeed",
+        "Sequence", "Selector", "Negation", "Evaluation", "Set", "Restart", "Pause", "Stop", "UDP Message", "Print Message",
+        "Sub-Tree", "AllFields", "FailNode", "Succeed", "Notes", "Group",
     ]
     assert widget.GetNodeType("Succeed") is Succeed
     assert widget.GetNodeType("Sequence") is None
     assert widget.GetNodeType("Negation") is None
+    assert widget.GetNodeType("Notes") is None
+    assert widget.GetNodeType("Group") is None
     assert widget.GetNodeType("Unknown") is None
 
 
@@ -1613,7 +1668,7 @@ def test_add_node_rejects_unknown_and_invalid_types(bt):
 # ============================================================================ Shutdown / independence
 def test_shutdown_is_idempotent_and_releases_blackboard_keys(bt):
     bt.SetEntry(1, "value")
-    key = bt.blackboardStore().key("value")
+    key = bt.blackboard_store().key("value")
     assert py_trees.blackboard.Blackboard.exists(key)
     bt.Shutdown()
     bt.Shutdown()
@@ -1654,8 +1709,8 @@ def test_two_widgets_have_independent_trees_and_blackboards(make_widget, tmp_pat
 
     fast_config(first)
     assert second.GetConfig() == TreeConfig()
-    assert first.windowTitle() == expected_title("first.json")
-    assert second.windowTitle() == expected_title("second.json")
+    assert first.windowTitle() == expected_title("first_BT.json")
+    assert second.windowTitle() == expected_title("second_BT.json")
 
     first.Shutdown()
     assert second.GetEntry("shared") == "text"
@@ -1682,7 +1737,7 @@ def test_demo_window_with_unmodified_tree_closes_without_prompts(qtbot, dialogs,
     qtbot.addWidget(window)
     window.show()
     assert window.tree.NewTree(str(tmp_path / "demo.json"))
-    assert window.windowTitle() == expected_title("demo.json")
+    assert window.windowTitle() == expected_title("demo_BT.json")
     assert window.close() is True
     assert dialogs.shown == []
 
@@ -1754,3 +1809,22 @@ def test_non_finite_positions_and_view_values_are_rejected(make_widget, tmp_path
     (leaf,) = [node for node in widget.GetNodes() if node.GetTypeName() == "Succeed"]
     assert leaf._item.pos().x() == 0.0
     assert widget.view().zoom() == 1.0
+
+
+# ============================================================================ UX details
+def test_execution_buttons_use_text_symbols(widget):
+    for name in ("Execute", "Pause", "Stop", "Reset", "Configure"):
+        text = widget.button(name).text()
+        assert text and all(ord(char) < 0x1F000 for char in text), (name, text)
+
+
+# ============================================================================ the unsaved-changes prompt
+def test_saving_from_the_unsaved_changes_prompt_reports_what_was_left_out(widget, dialogs):
+    widget.SetEntry([object()], "unsaveable")
+    widget.GetRootNode().SetMemory(False)  # an unsaved edit (blackboard changes are written at once)
+    assert widget.IsModified()
+    dialogs.question_answer = QMessageBox.StandardButton.Save
+    assert widget.ConfirmDiscardChanges()
+    assert not widget.IsModified()
+    assert dialogs.kinds()[-2:] == ["question", "warning"]
+    assert "unsaveable" in str(dialogs.shown[-1][1])

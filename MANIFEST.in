@@ -1,0 +1,10 @@
+# Files the README links to, so the source distribution is complete (setuptools adds README.md,
+# pyproject.toml and src/ itself, but of tests/ only the test_*.py files).
+include CHANGELOG.md
+recursive-include docs *.md
+include examples/*.py
+include tools/*.py
+# The oldest versions supported, which tests/test_packaging.py compares with pyproject.toml.
+include .github/minimum-versions.txt
+# The whole test suite: its conftest.py, support modules, performance tests and data files.
+recursive-include tests *.py *.json

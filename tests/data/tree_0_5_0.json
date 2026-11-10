@@ -1,0 +1,158 @@
+{
+  "format": "behavior_tree_widget",
+  "version": 1,
+  "config": {
+    "tick_interval_ms": 5,
+    "repeat": false,
+    "restore_blackboard": false,
+    "default_memory": true
+  },
+  "view": {
+    "zoom": 1.0,
+    "center": [
+      62.0,
+      60.0
+    ]
+  },
+  "nodes": [
+    {
+      "id": "7732388f717742a8a02b6299f65889c4",
+      "type": "Root",
+      "title": "Root",
+      "x": 0.0,
+      "y": 0.0,
+      "composite": "Selector",
+      "memory": true
+    },
+    {
+      "id": "3f0315db75b14d21b70d7d401c2aba8d",
+      "type": "Sequence",
+      "title": "Main",
+      "x": -400.0,
+      "y": 200.0,
+      "memory": false
+    },
+    {
+      "id": "504ac6cf8dd44cd6b537eeb152b4f1ff",
+      "type": "Negation",
+      "title": "Negation",
+      "x": 0.0,
+      "y": 200.0
+    },
+    {
+      "id": "92344031ad1c464a98a62575dec15f2d",
+      "type": "AllFields",
+      "title": "All Fields",
+      "x": -600.0,
+      "y": 400.0,
+      "fields": {
+        "count": 7,
+        "ratio": 0.5,
+        "label": "saved by 0.5.0",
+        "enabled": true,
+        "choice": [
+          "red",
+          "green",
+          "blue"
+        ]
+      },
+      "field_selections": {
+        "choice": 2
+      }
+    },
+    {
+      "id": "aee3bddd2abd48088da54e62ab3cac75",
+      "type": "Evaluation",
+      "title": "Evaluation",
+      "x": -300.0,
+      "y": 400.0,
+      "fields": {
+        "ValueName": "counter",
+        "CompareTo": null,
+        "LiteralValue": 4
+      }
+    },
+    {
+      "id": "1950d37de9194b1192940baa67d45c33",
+      "type": "Set",
+      "title": "Set",
+      "x": -100.0,
+      "y": 400.0,
+      "fields": {
+        "ValueName": "speed",
+        "CompareTo": null,
+        "LiteralValue": 2.5
+      }
+    },
+    {
+      "id": "d5b7c328ec9b45e7b484c62e1ab3a28f",
+      "type": "Pause",
+      "title": "Pause",
+      "x": 0.0,
+      "y": 400.0,
+      "fields": {}
+    },
+    {
+      "id": "b1e00a2f75894d9ba2b1e18755eab4c7",
+      "type": "Restart",
+      "title": "Restart",
+      "x": 300.0,
+      "y": 400.0,
+      "fields": {}
+    },
+    {
+      "id": "df66093a20f4428d9c2fd1dc71b1bc36",
+      "type": "Stop",
+      "title": "Stop",
+      "x": 500.0,
+      "y": 400.0,
+      "fields": {}
+    }
+  ],
+  "connections": [
+    {
+      "parent": "7732388f717742a8a02b6299f65889c4",
+      "child": "3f0315db75b14d21b70d7d401c2aba8d"
+    },
+    {
+      "parent": "7732388f717742a8a02b6299f65889c4",
+      "child": "504ac6cf8dd44cd6b537eeb152b4f1ff"
+    },
+    {
+      "parent": "3f0315db75b14d21b70d7d401c2aba8d",
+      "child": "92344031ad1c464a98a62575dec15f2d"
+    },
+    {
+      "parent": "3f0315db75b14d21b70d7d401c2aba8d",
+      "child": "aee3bddd2abd48088da54e62ab3cac75"
+    },
+    {
+      "parent": "3f0315db75b14d21b70d7d401c2aba8d",
+      "child": "1950d37de9194b1192940baa67d45c33"
+    },
+    {
+      "parent": "504ac6cf8dd44cd6b537eeb152b4f1ff",
+      "child": "d5b7c328ec9b45e7b484c62e1ab3a28f"
+    }
+  ],
+  "blackboard": [
+    {
+      "name": "counter",
+      "type": "Integer",
+      "value": 4
+    },
+    {
+      "name": "speed",
+      "type": "Double",
+      "value": 1.5
+    },
+    {
+      "name": "names",
+      "type": "List",
+      "value": [
+        "a",
+        "b"
+      ]
+    }
+  ]
+}

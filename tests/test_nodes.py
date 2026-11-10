@@ -26,10 +26,13 @@ import uuid
 from importlib import resources
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QAbstractScrollArea,
     QAbstractSpinBox,
     QApplication,
     QCheckBox,
@@ -38,7 +41,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QLineEdit,
-    QListView,
     QSpinBox,
     QWidget,
 )
@@ -52,7 +54,9 @@ from behavior_tree_widget import (
     Status,
     UnknownLeafNodeWidget,
 )
-from behavior_tree_widget import nodes as nodes_module
+from behavior_tree_widget import (
+    nodes as nodes_module,
+)
 from behavior_tree_widget.nodes import (
     CHILDREN,
     CONNECTION_COLORS,
@@ -77,6 +81,7 @@ from conftest import (
     run_until_idle,
     viewport_point,
 )
+from support.round8 import Chooser, build
 
 MAIN_THREAD = threading.get_ident()
 
@@ -108,8 +113,9 @@ def status_label(node: NodeWidget) -> QLabel:
     return label
 
 
-def fields_view(node: NodeWidget) -> QListView:
-    view = node.findChild(QListView, "Fields")
+def fields_view(node: NodeWidget) -> QWidget:
+    """The widget holding the field rows (named "Fields")."""
+    view = node.findChild(QWidget, "Fields")
     assert view is not None
     return view
 
@@ -120,33 +126,31 @@ def fields_frame(node: NodeWidget) -> QFrame:
     return frame
 
 
-def field_rows(node: NodeWidget) -> list[QWidget]:
-    """Row widgets shown in the Fields list, in display order."""
-    view = fields_view(node)
-    model = view.model()
-    if model is None:
-        return []
-    return [view.indexWidget(model.index(index, 0)) for index in range(model.rowCount())]
+def field_rows(node: NodeWidget) -> list[tuple[QWidget, QWidget]]:
+    """``(name box, editor)`` of each field row shown, in display order (the rows of the grid in "Fields")."""
+    layout = fields_view(node).layout()
+    cells = {}
+    for index in range(layout.count()):
+        widget = layout.itemAt(index).widget()
+        if widget is not None:
+            row, column, _, _ = layout.getItemPosition(index)
+            cells[(row, column)] = widget
+    return [(cells.get((row, 0)), cells.get((row, 1))) for row in sorted({row for row, _ in cells})]
 
 
-def row_of(node: NodeWidget, key: str) -> QWidget:
-    """The row of the Fields list holding the editor of ``key``."""
+def row_of(node: NodeWidget, key: str) -> tuple[QWidget, QWidget]:
+    """The row ``(name box, editor)`` holding the editor of ``key``."""
     editor = node.field_editor(key)
     assert editor is not None, f"no editor for field {key!r}"
-    rows = [row for row in field_rows(node) if row is not None and row.isAncestorOf(editor)]
-    assert len(rows) == 1, f"editor of {key!r} is not in exactly one row of the Fields list"
+    rows = [row for row in field_rows(node) if row[1] is editor]
+    assert len(rows) == 1, f"editor of {key!r} is not in exactly one row of the fields"
     return rows[0]
 
 
 def key_edits(node: NodeWidget, key: str) -> list[QLineEdit]:
-    """Read-only QLineEdits of the row of ``key`` other than the value editor."""
-    row = row_of(node, key)
-    editor = node.field_editor(key)
-    return [
-        edit
-        for edit in row.findChildren(QLineEdit)
-        if edit.isReadOnly() and edit is not editor and not editor.isAncestorOf(edit)
-    ]
+    """The read-only QLineEdits showing the name of ``key`` (one, left of its editor)."""
+    name_box, _ = row_of(node, key)
+    return [name_box] if isinstance(name_box, QLineEdit) and name_box.isReadOnly() else []
 
 
 def editor_value(editor: QWidget):
@@ -726,18 +730,19 @@ def test_each_row_pairs_read_only_key_line_edit_with_editor(bt):
     keys = list(AllFields._fields)
     rows = field_rows(node)
     assert len(rows) == len(keys)
+    container = fields_view(node)
     for index, key in enumerate(keys):
-        row = row_of(node, key)
-        assert rows[index] is row, f"row {index} does not hold field {key!r}"
+        assert rows[index] == row_of(node, key), f"row {index} does not hold field {key!r}"
         edits = key_edits(node, key)
         assert len(edits) == 1
         key_edit = edits[0]
+        assert key_edit is node.field_key(key)
         assert key_edit.text() == key
         assert key_edit.isReadOnly()
         # The key is shown next to (left of) the value editor on the same line.
         editor = node.field_editor(key)
-        key_rect = QRect(key_edit.mapTo(row, QPoint(0, 0)), key_edit.size())
-        editor_rect = QRect(editor.mapTo(row, QPoint(0, 0)), editor.size())
+        key_rect = QRect(key_edit.mapTo(container, QPoint(0, 0)), key_edit.size())
+        editor_rect = QRect(editor.mapTo(container, QPoint(0, 0)), editor.size())
         assert key_rect.right() < editor_rect.left()
         assert key_rect.top() < editor_rect.bottom() and editor_rect.top() < key_rect.bottom()
 
@@ -882,7 +887,6 @@ def test_set_field_on_gui_thread_updates_editor(bt, key, value, shown):
 @pytest.mark.parametrize("key, value, shown", SET_FIELD_CASES, ids=SET_FIELD_IDS)
 def test_set_field_from_worker_thread_updates_editor(qtbot, bt, key, value, shown):
     node = bt.AddNode(AllFields, 0, 200)
-    editor = node.field_editor(key)
     changed = Recorder(node.fieldChanged)
     run_in_thread(node.SetField, key, value)
     assert node.GetField(key) == value  # stored at once
@@ -975,7 +979,7 @@ def test_set_field_with_new_key_adds_row_and_grows_node(bt):
     assert isinstance(node.field_editor("extra"), QSpinBox)
     assert node.field_editor("extra").value() == 9
     assert len(field_rows(node)) == len(AllFields._fields) + 1
-    assert field_rows(node)[-1] is row_of(node, "extra")
+    assert field_rows(node)[-1] == row_of(node, "extra")
     assert [edit.text() for edit in key_edits(node, "extra")] == ["extra"]
     assert node.height() > old_height
     assert node._item.size().toSize() == node.size()
@@ -1175,23 +1179,22 @@ def test_fields_list_shows_all_rows_without_scrollbars(bt, count):
     fields = {f"field_{i}": values[i % len(values)] for i in range(count)}
     cls = make_leaf_class(f"Many{count}", fields)
     node = bt.AddNode(cls, 0, 200)
-    view = fields_view(node)
+    container = fields_view(node)
     rows = field_rows(node)
     assert len(rows) == count
-    total = sum(row.sizeHint().height() for row in rows)
-    assert view.height() >= total
-    assert view.viewport().height() >= total
-    assert view.verticalScrollBar().maximum() == 0
-    assert view.horizontalScrollBar().maximum() == 0
-    assert not view.verticalScrollBar().isVisible()
-    assert not view.horizontalScrollBar().isVisible()
-    viewport_rect = view.viewport().rect()
+    assert not isinstance(container, QAbstractScrollArea), "the rows are laid out in full, never scrolled"
+    container_rect = QRect(container.mapTo(node, QPoint(0, 0)), container.size())
+    assert node.rect().contains(container_rect)
+    total = 0
     for row in rows:
-        assert row.isVisibleTo(node)
-        assert row.height() >= row.sizeHint().height()
-        assert viewport_rect.contains(row.geometry()), (row.geometry(), viewport_rect)
+        for widget in row:
+            assert widget.isVisibleTo(node)
+            assert widget.height() >= widget.sizeHint().height()
+            assert container.rect().contains(widget.geometry()), (widget.geometry(), container.rect())
+        total += max(widget.height() for widget in row)
+    assert container.height() >= total
     # The whole list lies inside the node, which is fully shown by its scene item.
-    bottom = view.mapTo(node, QPoint(0, view.height())).y()
+    bottom = container.mapTo(node, QPoint(0, container.height())).y()
     assert bottom <= node.height()
     assert node._item.size().toSize() == node.size()
 
@@ -1205,6 +1208,47 @@ def test_get_children_orders_left_to_right(bt):
     for node in (right, left, middle):
         bt.Connect(root, node)
     assert root.GetChildren() == [left, middle, right]
+
+
+def test_running_the_tree_keeps_the_order_of_siblings(qtbot, bt):
+    """The status texts are wider than "Ready": a node sized for "Ready" would grow while it
+    runs, which moves its centre, and the centres order siblings (ties: the higher node first)."""
+    root = bt.GetRootNode()
+    root.SetCompositeType("Selector")
+    upper = bt.AddNode(Succeed, 0, 250)
+    lower = bt.AddNode(Succeed, 0, 450)
+    for node in (upper, lower):
+        bt.Connect(root, node)
+    sizes = [node.size() for node in (upper, lower)]
+    fast_config(bt)
+    bt.Execute()
+    run_until_idle(qtbot, bt)
+    QApplication.processEvents()
+    assert upper.GetStatus() is NodeStatus.SUCCEEDED and lower.GetStatus() is NodeStatus.READY
+    assert [node.size() for node in (upper, lower)] == sizes
+    assert root.GetChildren() == [upper, lower]
+
+
+@pytest.mark.parametrize("status", list(NodeStatus))
+def test_a_node_has_room_for_every_status_text(bt, status):
+    node = bt.AddNode(Succeed, 0, 250)
+    label = node._status_label
+    node._set_status(status)
+    label.ensurePolished()
+    assert label.minimumWidth() >= label.sizeHint().width()
+
+
+def test_a_removed_node_cannot_be_added_again(qtbot, bt, make_widget):
+    node = bt.AddNode(Succeed, 0, 250)
+    bt.RemoveNode(node)
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        bt.AddNode(node, 100, 250)
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        make_widget().AddNode(node, 100, 250)
+    assert node not in bt.GetNodes()
+    qtbot.waitUntil(lambda: not shiboken6.isValid(node), timeout=3000)  # deleted with its old item
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        bt.AddNode(node, 100, 250)
 
 
 def test_get_children_ties_broken_top_first(bt):
@@ -1280,7 +1324,6 @@ def test_is_interactive_widget_classification(bt):
         assert not nodes_module.is_interactive_widget(node.findChild(QLabel, name), node), name
     assert not nodes_module.is_interactive_widget(fields_frame(node), node)
     assert not nodes_module.is_interactive_widget(fields_view(node), node)
-    assert not nodes_module.is_interactive_widget(fields_view(node).viewport(), node)
     assert not nodes_module.is_interactive_widget(None, node)
 
 
@@ -1297,7 +1340,7 @@ def test_unknown_leaf_keeps_type_name_and_fields(qtbot):
     assert isinstance(node.field_editor("a"), QSpinBox)
     assert node.field_editor("b").currentIndex() == 1
     assert fields_frame(node).isVisibleTo(node)
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError, match="not registered"):
         node.OnRun(None)
 
 
@@ -1308,7 +1351,7 @@ def test_unknown_leaf_round_trips_through_save_and_load(qtbot, bt, make_widget, 
     leaf.SetField("count", 9)
     leaf.SetField("label", "kept")
     leaf.SetFieldSelectionIndex("choice", 2)
-    first_path = tmp_path / "first.json"
+    first_path = tmp_path / "first_BT.json"
     assert bt.SaveTree(str(first_path))
 
     other = make_widget(node_types=[])
@@ -1322,7 +1365,7 @@ def test_unknown_leaf_round_trips_through_save_and_load(qtbot, bt, make_widget, 
     assert node.GetParent() is other.GetRootNode()
     assert type(node.field_editor("count")) is QSpinBox
 
-    second_path = tmp_path / "second.json"
+    second_path = tmp_path / "second_BT.json"
     assert other.SaveTree(str(second_path))
     saved = {n["id"]: n for n in json.loads(first_path.read_text(encoding="utf-8"))["nodes"]}
     resaved = {n["id"]: n for n in json.loads(second_path.read_text(encoding="utf-8"))["nodes"]}
@@ -1423,16 +1466,35 @@ def test_custom_composite_ui_missing_required_label_raises(qtbot, tmp_path, miss
 def test_custom_leaf_ui_without_fields_list_still_works(qtbot, tmp_path):
     text = packaged_ui_text("LeafNode.ui")
     start = text.index('    <widget class="QFrame" name="FrameFields">')
-    end = text.index("</widget>", text.index('<widget class="QListView" name="Fields"/>')) + len("</widget>")
+    end = text.index("</widget>", text.index('<widget class="QWidget" name="Fields"/>')) + len("</widget>")
     path = tmp_path / "NoFieldsList.ui"
     path.write_text(text[:start] + text[end:], encoding="utf-8")
     cls = make_leaf_class("NoListLeaf", {"n": 1}, UI_FILE=str(path))
     node = cls()
     qtbot.addWidget(node)
-    assert node.findChild(QListView, "Fields") is None
+    assert node.findChild(QWidget, "Fields") is None
     assert title_label(node).text() == "NoListLeaf"
     node.SetField("n", 2)
     assert node.GetField("n") == 2
+
+
+@pytest.mark.parametrize("old_widget", ["QListView", "QTreeView"])
+def test_custom_leaf_ui_with_a_fields_list_of_earlier_versions_shows_the_rows(qtbot, tmp_path, old_widget):
+    # Before 0.9.0 the field rows were index widgets of a QListView named "Fields".
+    text = packaged_ui_text("LeafNode.ui").replace(
+        '<widget class="QWidget" name="Fields"/>', f'<widget class="{old_widget}" name="Fields"/>'
+    )
+    path = tmp_path / f"Old{old_widget}.ui"
+    path.write_text(text, encoding="utf-8")
+    cls = make_leaf_class(f"OldList{old_widget}", {"n": 1, "label": "x"}, UI_FILE=str(path))
+    node = cls()
+    qtbot.addWidget(node)
+    assert not isinstance(fields_view(node), QAbstractItemView)
+    assert all(not old.isVisibleTo(node) and old.objectName() != "Fields" for old in node.findChildren(QAbstractItemView))
+    assert fields_frame(node).isAncestorOf(fields_view(node))
+    assert [name_box.text() for name_box, _ in field_rows(node)] == ["n", "label"]
+    node.field_editor("n").setValue(5)
+    assert node.GetField("n") == 5
 
 
 def test_leaf_with_composite_ui_hides_child_connections(qtbot, tmp_path):
@@ -1558,3 +1620,44 @@ def test_wheel_guard_filter_directly(qtbot):
     assert not spin.hasFocus()
     assert guard.eventFilter(spin, event) is True
     assert not event.isAccepted()
+
+
+# ============================================================================ UX details
+def test_field_editor_shows_the_start_of_long_text_after_set_field(widget):
+    class Texty(LeafNodeWidget):
+        TYPE_NAME = "R5Texty"
+        _fields = {"text": "short"}
+        RUN_IN_THREAD = False
+
+        def OnRun(self, tree):
+            return True
+
+    node = widget.AddNode(Texty, 0, 200)
+    node.SetField("text", "START " + "x" * 200)
+    assert node.field_editor("text").cursorPosition() == 0
+
+
+# ============================================================================ list fields
+def test_a_list_field_item_that_cannot_be_converted_to_text(widget):
+    (node,) = build(widget, Chooser)
+    node.SetField("choices", [10**5000, 7])
+    combo = node._editors["choices"]
+    assert isinstance(combo, QComboBox)
+    assert [combo.itemText(i) for i in range(combo.count())] == ["<int object>", "7"]
+    node.SetField("b", 2.5)  # another kind: the editors are rebuilt
+    node.SetField("a", 5)
+    node.SetField("choices", ["x", "y"])
+    assert node.GetField("a") == 5 and node.GetField("b") == 2.5 and node.GetField("choices") == ["x", "y"]
+
+def test_a_node_class_with_such_a_default_can_be_created(widget):
+    class HugeChoices(LeafNodeWidget):
+        TYPE_NAME = "R8HugeChoices"
+        RUN_IN_THREAD = False
+        _fields = {"choices": [10**5000, 1]}
+
+        def OnRun(self, tree):
+            return True
+
+    widget.RegisterNodeType(HugeChoices)
+    node = widget.AddNode(HugeChoices, 0, 200)
+    assert node.GetFieldSelection("choices") == 10**5000

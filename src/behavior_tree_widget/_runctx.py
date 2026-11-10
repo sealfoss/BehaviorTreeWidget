@@ -13,11 +13,11 @@ their run's token bound to the thread, so
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 
-class ExecutionCancelled(RuntimeError):
+class ExecutionCancelled(RuntimeError):  # noqa: N818 - a public name since 0.4
     """Raised when an ``OnRun`` call that was cancelled (Stop, Reset, preemption,
     loading another tree) tries to modify the blackboard or its node."""
 
