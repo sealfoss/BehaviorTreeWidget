@@ -49,7 +49,11 @@ class WorkerPool:
     def __init__(self, idle_timeout: float = 60.0) -> None:
         self.idle_timeout = idle_timeout
         self._lock = threading.Lock()
-        self._tasks: queue.SimpleQueue = queue.SimpleQueue()
+        # Not queue.SimpleQueue: before Python 3.13 its get(timeout=...) can wait forever when
+        # several threads wait on it (a waiter that loses a call to another one waits again with
+        # what is left of its timeout; once that is negative, it waits without one), so an idle
+        # worker would never end. queue.Queue.get never waits beyond its timeout.
+        self._tasks: queue.Queue = queue.Queue()
         self._idle = 0  # waiting workers that no queued call was promised to
         self._workers = 0  # workers alive
         self._started = 0  # workers started so far

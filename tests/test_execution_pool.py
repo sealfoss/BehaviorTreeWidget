@@ -101,14 +101,17 @@ def test_idle_workers_end_after_the_idle_timeout():
     assert pool.submit(lambda: "again", "bt-again").result(timeout=5) == "again"  # a new worker starts
 
 
-def test_no_call_is_lost_when_workers_end_while_calls_arrive():
-    """Calls submitted from several threads while workers keep timing out: every call runs once."""
+@pytest.mark.parametrize("attempt", range(3))
+def test_no_call_is_lost_when_workers_end_while_calls_arrive(attempt):
+    """Calls submitted from several threads while workers keep timing out: every call runs once,
+    and afterwards every worker ends. (With queue.SimpleQueue, whose get(timeout=...) can wait
+    forever before Python 3.13, some workers never ended in about one attempt in seven.)"""
     pool = WorkerPool(idle_timeout=0.001)
     results = []
     lock = threading.Lock()
 
     def submitter(seed: int) -> None:
-        rng = random.Random(seed)
+        rng = random.Random(seed + 100 * attempt)
         futures = []
         for index in range(60):
             value = (seed, index)
