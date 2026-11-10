@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         # New/Load replace the blackboard, so (re)create the entries the nodes need.
         self.tree.treeLoaded.connect(lambda _path: ensure_entries(self.tree))
 
-    def closeEvent(self, event):  # noqa: N802 - Qt API
+    def closeEvent(self, event):
         # Offer to save unsaved changes, then stop execution and release resources.
         if not self.tree.ConfirmDiscardChanges():
             event.ignore()

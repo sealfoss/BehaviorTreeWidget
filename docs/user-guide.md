@@ -210,7 +210,8 @@ gets back the value it had when that loop started:
   [The blackboard](#the-blackboard)). Other values written by running nodes (fields, titles)
   do not count as unsaved changes, but they are part of the tree: a later Save writes them.
   Enable "Restore blackboard values on Stop / Reset" to undo blackboard changes; the restored
-  values are then written to the file. Changes your code makes on the GUI thread while the
+  values are then written to the file. It undoes the Reset flags and names of entries too: an
+  entry renamed during the run is renamed back, and the nodes using it follow it. Changes your code makes on the GUI thread while the
   tree is idle, such as a `SetField` at start-up, count as edits.
 * Execute, Pause, Stop and Reset called during a tick (from `OnRun`, a signal handler or a
   dialog) are carried out right after that tick. After a Stop or Reset, no more node code runs

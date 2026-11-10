@@ -86,13 +86,12 @@ __all__ = [
     "run_in_daemon_thread",
 ]
 
-class ExecutionState(str, enum.Enum):
+class ExecutionState(enum.StrEnum):
+    """State of the executor (``str()`` gives the text the widget shows)."""
+
     IDLE = "Idle"
     RUNNING = "Running"
     PAUSED = "Paused"
-
-    def __str__(self) -> str:
-        return self.value
 
 
 class CommandQueue:

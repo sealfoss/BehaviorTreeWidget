@@ -34,20 +34,24 @@ The `test` extra installs pytest, pytest-qt, pytest-timeout and pytest-xdist.
 ## Checking the code
 
 ```bash
-.venv/Scripts/python -m ruff check src tests tools    # lint (configuration: pyproject.toml)
-.venv/Scripts/python -m mypy                          # type check (configuration: pyproject.toml)
-.venv/Scripts/python -m mypy --platform linux         # type check as the CI does (on Ubuntu)
+.venv/Scripts/python -m ruff check src tests tools examples   # lint (configuration: pyproject.toml)
+.venv/Scripts/python -m mypy                                  # type check (configuration: pyproject.toml)
+.venv/Scripts/python -m mypy --platform linux                 # type check as the CI does (on Ubuntu)
 ```
 
-The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. mypy checks
+The generated forms in `src/behavior_tree_widget/_forms/` are excluded from both. mypy also
+reports the use of deprecated names and every override without `@override` (`typing.override`):
+a method that overrides one must be marked, and `@override` on a method that overrides nothing,
+such as a misspelled Qt event handler, is an error. mypy checks
 the code for the platform it runs on: code under a `sys.platform` check is only checked there
 (code under an `os.name` check is checked everywhere, so Windows-only code belongs under
 `sys.platform == "win32"`).
 
 The GitHub Actions workflow `.github/workflows/ci.yml` runs on every push and pull request: ruff,
-mypy and `tools/compile_ui.py --check` on Ubuntu, the test suite on Windows with Python 3.10 and
-3.13 (offscreen, `pytest -n auto`), and then builds the wheel and the source distribution, which
-it keeps as the `dist` artifact of the run. Each failed test is also an annotation of the run
+mypy and `tools/compile_ui.py --check` on Ubuntu, the test suite on Windows (offscreen,
+`pytest -n auto`) with Python 3.13 and 3.14 and once more with Python 3.13 and the oldest
+PySide6 and py_trees supported (the pip constraints in `.github/minimum-versions.txt`), and then
+builds the wheel and the source distribution, which it keeps as the `dist` artifact of the run. Each failed test is also an annotation of the run
 (`pytest_terminal_summary` in `tests/conftest.py`), so it can be read without the log.
 
 ## Editing the Qt Designer files

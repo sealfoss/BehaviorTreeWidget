@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 
 import shiboken6
 from PySide6.QtCore import QSignalBlocker
@@ -39,6 +39,7 @@ from ._common import INT_MAX, INT_MIN
 from .blackboard import (
     ENTRY_TYPES,
     FloatSpinBox,
+    _equal_values,
     _same_value,
     coerce_value,
     infer_type,
@@ -138,20 +139,34 @@ def convert_literal(value: Any, type_name: str) -> Any:
 
 
 def values_equal(a: Any, b: Any) -> bool:
-    """``a == b`` for blackboard values, except that a bool only equals a bool."""
+    """``a == b`` for blackboard values, except that a bool only equals a bool, also in lists,
+    tuples, sets and the values of dicts (``1 == 1.0``, but ``[True] != [1]``)."""
+    try:
+        return _values_equal(a, b)
+    except Exception:  # noqa: BLE001 - e.g. an Object entry with a failing __eq__, or too deep
+        return False
+
+
+def _values_equal(a: Any, b: Any) -> bool:
     if isinstance(a, bool) is not isinstance(b, bool):
         return False
-    try:
-        return bool(a == b)
-    except Exception:  # noqa: BLE001 - e.g. an Object entry with a failing __eq__
-        return False
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return (
+            type(a) is type(b)
+            and len(a) == len(b)
+            and all(_values_equal(x, y) for x, y in zip(a, b, strict=True))
+        )
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_values_equal(value, b[key]) for key, value in a.items())
+    if isinstance(a, (set, frozenset)) and isinstance(b, (set, frozenset)):
+        return a == b and {x for x in a if isinstance(x, bool)} == {y for y in b if isinstance(y, bool)}
+    return bool(a == b)
 
 
 def _same(a: Any, b: Any) -> bool:
-    """Whether storing ``b`` over ``a`` changes nothing (same type and value)."""
-    if isinstance(a, float) and isinstance(b, float):
-        return _same_value(a, b)
-    return type(a) is type(b) and values_equal(a, b)
+    """Whether storing ``b`` over ``a`` changes nothing (the same types and values; see
+    :func:`_equal_values`)."""
+    return _equal_values(a, b)
 
 
 class BlackboardValueNodeWidget(BlackboardAwareLeaf):
@@ -273,6 +288,7 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
         return name, convert_literal(literal, type_name)
 
     # ------------------------------------------------------------------ editors
+    @override
     def _refresh_editors(self) -> None:
         """Show the node's choices and the blackboard's current entries in the editors."""
         value_box, compare_box = self._value_box, self._compare_box
@@ -498,10 +514,12 @@ class BlackboardValueNodeWidget(BlackboardAwareLeaf):
             self.changed.emit(False)
 
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         with self._lock:
             return {"fields": dict(self._fields)}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         saved = data.get("fields")
         if isinstance(saved, dict):
@@ -533,6 +551,7 @@ class EvaluationNodeWidget(BlackboardValueNodeWidget):
     TYPE_NAME = "Evaluation"
     _title = "Evaluation"
 
+    @override
     def OnRun(self, tree):
         name, other = self._operands(tree)
         return values_equal(tree.GetEntry(name), other)
@@ -545,6 +564,7 @@ class SetNodeWidget(BlackboardValueNodeWidget):
     TYPE_NAME = "Set"
     _title = "Set"
 
+    @override
     def OnRun(self, tree):
         name, value = self._operands(tree)
         tree.SetEntry(value, name)

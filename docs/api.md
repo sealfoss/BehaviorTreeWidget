@@ -13,7 +13,7 @@ A `QTabWidget` with the tabs "Behavior Tree" and "Blackboard".
 | `ConfirmDiscardChanges()` | Asks whether to save unsaved changes (of the tree and of the sub-trees shown with Zoom In). Returns `False` if the user cancelled. |
 | `IsTreeLoaded()`, `GetFilePath()`, `GetBlackboardFilePath()`, `IsModified()` | Tree state: the tree file (`<name>_BT.json`; a file of an earlier version keeps its name until saved) and the blackboard file (`<name>_BB.json`). `IsModified()` is also `True` while a sub-tree shown with Zoom In has unsaved changes. |
 | `GetRootNode()`, `GetNodes()` | Nodes of the tree shown (of the sub-tree while zoomed in). |
-| `AddNode(node_type, x=0.0, y=0.0)` | Adds a node with its top-left corner at scene position (x, y) and returns it. `node_type` is one of the names returned by `GetNodeTypes()`, a leaf class or a node instance (except a Root); classes are registered automatically. Raises `ValueError` for unknown names (and `"Root"`) and `RuntimeError` while executing. |
+| `AddNode(node_type, x=0.0, y=0.0)` | Adds a node with its top-left corner at scene position (x, y) and returns it. `node_type` is one of the names returned by `GetNodeTypes()`, a leaf class or a node instance (except a Root); classes are registered automatically. Raises `ValueError` for unknown names (and `"Root"`), for a node that is part of a tree and for a node removed from one (`RemoveNode` deletes it), and `RuntimeError` while executing. |
 | `RemoveNode(node)`, `Connect(parent, child)`, `Disconnect(child)` | Edit the structure. Raise `RuntimeError` while executing; `Connect` raises `ValueError` for invalid connections such as cycles. Connecting a second child to a Negation replaces its child. |
 | `GetSelectedNodes()`, `SelectNodes(nodes, add=False)` | The selected nodes; select nodes (`add=True` keeps the current selection, `SelectNodes([])` deselects all). |
 | `CopyNodes(nodes=None)` | Copies `nodes` (default: the selected nodes) and the connections between them to the clipboard, as Ctrl+C does. Returns `False` (and leaves the clipboard alone) when there is nothing to copy; the Root is never copied. |
@@ -103,7 +103,8 @@ calls `Shutdown()` if `Qt.WidgetAttribute.WA_DeleteOnClose` is set, and `Stop()`
 * `LeafNodeWidget`: subclass it (see [Writing leaf nodes](writing-nodes.md)). For tests and
   customisation, `field_editor(key)` returns the editor of a field and `field_key(key)` the
   read-only box showing its name.
-* `NodeStatus`: `READY`, `RUNNING`, `SUCCEEDED`, `FAILED` (values `"Ready"`, …).
+* `NodeStatus`: `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, a `StrEnum`: each one is its text
+  (`NodeStatus.SUCCEEDED == "Succeeded"`, and `str()` and f-strings give `"Succeeded"`).
 * `Status` is a re-export of `py_trees.common.Status`, for `OnRun` return values.
 * `ExecutionCancelled` is raised when an interrupted `OnRun` call tries to change the tree.
 * `TreeConfig` holds the execution options: `tick_interval_ms`, `repeat` (Loop Execution),
@@ -125,7 +126,9 @@ calls `Shutdown()` if `Qt.WidgetAttribute.WA_DeleteOnClose` is set, and `Stop()`
   grows with every change; with `saved=True` only with changes that can alter the blackboard
   file, so changes of Object entries do not count), `batch()` (a context manager grouping bulk
   changes: listeners can check `in_batch()` and redraw once on the signal `batchFinished`),
-  `snapshot()` / `restore(snapshot)`, `to_list()` / `load_list(items, replace=False)` /
+  `snapshot()` / `restore(snapshot)` (a snapshot is a `behavior_tree_widget.blackboard.BlackboardSnapshot`: the list of
+  `(name, type, value)` tuples, which also holds the Reset flags and which entry is which, so
+  that `restore` renames entries renamed since back and puts back the Reset flags), `to_list()` / `load_list(items, replace=False)` /
   `parse_list(items)` (the entries in the form of the blackboard file), `is_capturing()` (an
   execution loop is recording loop-start values) and `client()` (its `py_trees.blackboard.Client`).
 * `TreeExecutor.TICK_WAIT_BUDGET` (seconds, default `0.1`) is how long one tick may wait for

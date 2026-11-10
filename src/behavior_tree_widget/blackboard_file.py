@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from .blackboard import BlackboardStore
+from .blackboard import BlackboardStore, _equal_values
 from .serialization import blackboard_document, write_json_atomic
 from .tree_log import LogLevel
 
@@ -133,9 +133,9 @@ class BlackboardFileWriter(QObject):
             if problem not in self._skipped:
                 self._skipped.add(problem)
                 log.warning("%s", problem)
-        if not force and blackboard == self._written and self.error is None:
+        if not force and _equal_values(blackboard, self._written) and self.error is None:
             self._written_revision = revision
-            return True  # e.g. a value was changed and changed back
+            return True  # e.g. a value was changed and changed back (== would also take [1] for [True])
         self._last_write = time.monotonic()
         try:
             write_json_atomic(path, blackboard_document(blackboard))

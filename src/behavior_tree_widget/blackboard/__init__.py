@@ -31,7 +31,7 @@ from .._common import INT_MAX, INT_MIN
 from .float_spinbox import _DBL_MAX as _DBL_MAX
 from .float_spinbox import FloatSpinBox
 from .float_spinbox import _parse_float_text as _parse_float_text
-from .store import BlackboardStore
+from .store import BlackboardSnapshot, BlackboardStore
 from .values import (
     DISPLAY_LIMIT,
     ENTRY_TYPES,
@@ -81,6 +81,7 @@ __all__ = [
     "RESET_TOOLTIP",
     "TYPE_ALIASES",
     "AddEntryDialog",
+    "BlackboardSnapshot",
     "BlackboardStore",
     "BlackboardView",
     "EditContainerDialog",

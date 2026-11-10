@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, cast
+from typing import Any, cast, override
 
 import shiboken6
 from PySide6.QtCore import QPoint, QSignalBlocker, Qt, Signal
@@ -159,6 +159,7 @@ class AddEntryDialog(_ValueDialogBase):
         layout.addWidget(self.buttons)
         self.name_edit.setFocus()
 
+    @override
     def _validate(self) -> None:
         name = self._store.validate_name(self.name_edit.text().strip())
         value = coerce_value(self.type_name, editor_value(self.type_name, self.value_editor))
@@ -192,6 +193,7 @@ class EditContainerDialog(_ValueDialogBase):
         layout.addWidget(self.error_label)
         layout.addWidget(self.buttons)
 
+    @override
     def _validate(self) -> None:
         self._value = parse_container_text(self.type_name, self.text_edit.text())
 

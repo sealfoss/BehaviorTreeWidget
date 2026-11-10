@@ -320,6 +320,15 @@ def test_three_levels_deep_and_back_to_the_top(qtbot, tree, chain, tmp_path):
     assert not tree.IsModified()
 
 
+def test_go_back_reports_the_selection_change_once(tree, chain):
+    tree.ZoomIn(chain)
+    tree.SelectNodes(tree.GetNodes())
+    selections = []
+    tree.nodeSelectionChanged.connect(lambda: selections.append(tree.GetSelectedNodes()))
+    assert tree.GoBack(save=False)
+    assert selections == [[]]
+
+
 def test_the_go_back_button_goes_up_one_level(tree, chain):
     tree.ZoomIn(chain)
     tree.ZoomIn(by_id(tree.GetNodes(), "to_b"))

@@ -21,7 +21,7 @@ error when the chosen entry does not exist.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 import shiboken6
 from PySide6.QtCore import QSignalBlocker
@@ -90,6 +90,7 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
         self._message_edit.textEdited.connect(self._on_message_typed)
         self._refresh_editors()
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{PRINT_MESSAGE} - writes the Message, or the value of a blackboard entry, to the tree's log"
 
@@ -151,6 +152,7 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
             raise ValueError(f"the blackboard has no entry named {source!r} (Source)") from None
         return f"{source} = {value_text(value)}"
 
+    @override
     def OnRun(self, tree):
         level = self.GetLevel()
         if level is LogLevel.NONE:
@@ -159,6 +161,7 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
         return True
 
     # ------------------------------------------------------------------ editors
+    @override
     def _refresh_editors(self) -> None:
         """Show the node's choices and the blackboard's current entries in the editors."""
         level_box, source_box, edit = self._level_box, self._source_box, self._message_edit
@@ -219,10 +222,12 @@ class PrintMessageNodeWidget(BlackboardAwareLeaf):
         self._on_editor_value(self.MESSAGE_FIELD, text)
 
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         with self._lock:
             return {"fields": dict(self._fields)}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         saved = data.get("fields")
         if isinstance(saved, dict):

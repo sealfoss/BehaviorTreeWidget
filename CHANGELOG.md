@@ -1,5 +1,65 @@
 # Changes
 
+## 0.10.0 (2026-11-09)
+
+Python 3.13 or later is required, and bugs found by a review of the whole package are fixed.
+The file formats are unchanged: 0.10.0 reads and writes the same files as 0.9.0 and 0.8.0.
+
+### Requirements
+
+* Python 3.13 or later (was 3.10, which reached its end of life in October 2026).
+* PySide6 6.9.1 or later (was 6.5). The PySide6 versions from 6.8.0.2, the first one for
+  Python 3.13, to 6.9.0 crash when a click outside a drop-down list open in a node closes it.
+* py_trees 2.2.1 or later, as before.
+
+### Changed
+
+* `NodeStatus` and `ExecutionState` are `StrEnum`s. They compare, print and format as before.
+* The deprecated camelCase accessors (`mainView()`, ...) are marked with
+  `warnings.deprecated`, so type checkers and editors flag them.
+* `BlackboardStore.snapshot()` returns a `BlackboardSnapshot`: a list of the same
+  `(name, type, value)` tuples that also holds the Reset flags and which entry is which.
+* `AddNode` raises `ValueError` for a node removed from a tree (`RemoveNode` deletes it).
+* The Status label of a node has room for every status text from the start, so a node no
+  longer grows when it first runs. Small nodes are a few pixels wider.
+
+### Fixed
+
+* "Restore blackboard values on Stop / Reset" lost the Reset flag of an entry removed or
+  renamed during the run, and wrote the blackboard file without it.
+* The same option put an entry renamed during the run back as a new entry: the Set,
+  Evaluation and Print Message nodes using it kept the new name, which no longer existed.
+  The entry is now renamed back, and the nodes follow it.
+* The blackboard file was not written when a value changed to one that Python finds equal,
+  such as `[1, 0]` to `[True, False]`, `[1, 2]` to `[1.0, 2.0]` or `0.0` to `-0.0`. The file
+  kept the old value.
+* For the same reason, an entry with the Reset flag was not reset at the end of a loop after
+  such a change.
+* Evaluation nodes took `[True]` for `[1]`. A bool now equals only a bool inside lists,
+  tuples, sets and dicts too, as it already did outside them.
+* A failed Sub-Tree node could report the error of a node that had not made the sub-tree
+  fail: a node that failed with an error earlier, while its parent went on to another child.
+* Running a tree could change the order of siblings: a node grew to show "Succeeded", which
+  moved its centre.
+* A removed node could be added again. It was then invisible, and it was deleted while it was
+  still part of the tree.
+* After a tree was loaded, default group names started at `group_001` again once its groups
+  were deleted, instead of counting on from the groups of that tree.
+* Go Back emitted `nodeSelectionChanged` twice.
+
+### Development
+
+* Every method that overrides one is marked `@override`. mypy checks this (`explicit-override`),
+  rejects `@override` on a method that overrides nothing, and reports uses of deprecated names.
+* CI tests Python 3.13 and 3.14, and Python 3.13 once more with the oldest PySide6 and
+  py_trees supported (`.github/minimum-versions.txt`). ruff also checks `examples/`.
+* The group colour tests no longer use `QAction.menu()`: before PySide6 6.11, its wrapper
+  deletes the submenu when it is garbage collected.
+* `tests/test_packaging.py` checks that pyproject.toml, the CI constraints, the package version
+  and this changelog agree.
+* The source distribution holds the whole test suite. That of 0.9.0 lacked `conftest.py`, the
+  support modules and the test data, so its tests could not run.
+
 ## 0.9.0 (2026-11-09)
 
 Faster, and split into modules of one job each, with no change to the file formats: 0.9.0 reads

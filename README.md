@@ -45,7 +45,7 @@ py_trees, and inspect or modify the blackboard.
 
 ## Installation
 
-Requirements: Python ≥ 3.10, PySide6 ≥ 6.5 and py_trees ≥ 2.2.1. pip installs these
+Requirements: Python ≥ 3.13, PySide6 ≥ 6.9.1 and py_trees ≥ 2.2.1. pip installs these
 automatically.
 
 The wheel of the current version is in the `dist/` folder of this repository, named

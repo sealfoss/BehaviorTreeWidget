@@ -41,7 +41,7 @@ import logging.handlers
 import os
 import queue
 import threading
-from typing import Any, cast
+from typing import Any, cast, override
 
 from PySide6.QtCore import QMetaMethod, QObject, Qt, Signal
 
@@ -123,6 +123,7 @@ _unflushed: set = set()  # _LogFiles written since the last flush (writer thread
 class _Dispatch(logging.Handler):
     """Hands each record to the log file it belongs to (runs on the writer thread)."""
 
+    @override
     def handle(self, record: logging.LogRecord) -> bool:
         barrier = getattr(record, "bt_barrier", None)
         target = getattr(record, "bt_target", None)
@@ -143,6 +144,7 @@ class _Dispatch(logging.Handler):
             barrier.set()
         return True
 
+    @override
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - handle() is used
         self.handle(record)
 
@@ -258,6 +260,7 @@ class _LogFile:
 class _UnflushedFileHandler(logging.FileHandler):
     """A FileHandler that leaves flushing to the writer thread (see _Dispatch.handle)."""
 
+    @override
     def emit(self, record: logging.LogRecord) -> None:
         if self.stream is None:
             if self.mode != "w" or not self._closed:  # type: ignore[attr-defined]  # set by FileHandler; not in typeshed
@@ -279,6 +282,7 @@ class _FileQueueHandler(logging.handlers.QueueHandler):
         super().__init__(_queue)
         self._sink = sink
 
+    @override
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         # The records are made by TreeLogger.log for this queue only (a plain message, no
         # arguments, no exception): no need for QueueHandler's copy of the formatted record.

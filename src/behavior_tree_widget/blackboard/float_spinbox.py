@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sys
+from typing import override
 
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence, QValidator
@@ -131,6 +132,7 @@ class FloatSpinBox(QDoubleSpinBox):
                 self._exact = pending
                 self.valueChanged.emit(self.value())
 
+    @override
     def stepBy(self, steps: int) -> None:
         text = self.lineEdit().text()
         typed = _parse_float_text(text)
@@ -148,6 +150,7 @@ class FloatSpinBox(QDoubleSpinBox):
                 self._exact, self._exact_at = typed, self.valueFromText(text)
         super().stepBy(steps)
 
+    @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
         # A typed or pasted "," goes into the text as "." through QLineEdit's own insert
         # path (a text that validate() has to change is set anew, which clears undo).
@@ -188,6 +191,7 @@ class FloatSpinBox(QDoubleSpinBox):
             edit.clear()
 
     # ------------------------------------------------------------------ text
+    @override
     def textFromValue(self, value: float) -> str:
         if self._pending_exact is not None and value == self._exact_at:
             return repr(self._pending_exact)
@@ -198,6 +202,7 @@ class FloatSpinBox(QDoubleSpinBox):
             return repr(value)  # the largest float was typed, not infinity
         return repr(self._default_exact(value))
 
+    @override
     def valueFromText(self, text: str) -> float:
         value = _parse_float_text(text)
         if value is None:
@@ -212,6 +217,7 @@ class FloatSpinBox(QDoubleSpinBox):
             return self._exact_at  # the value shown: keep Qt's (rounded) copy, nothing changed
         return max(-_DBL_MAX, min(_DBL_MAX, value))
 
+    @override
     def validate(self, text: str, position: int):
         normalized = text.replace(",", ".")
         stripped = normalized.strip()

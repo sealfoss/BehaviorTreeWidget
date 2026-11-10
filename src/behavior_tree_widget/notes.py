@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
+from typing import Any, override
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QTextCursor, QTextOption
@@ -121,12 +121,15 @@ class _FitLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
 
     # The note's size is chosen by the user: the text never asks for room.
+    @override
     def hasHeightForWidth(self) -> bool:
         return False
 
+    @override
     def sizeHint(self) -> QSize:
         return QSize(0, 0)
 
+    @override
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)
 
@@ -147,6 +150,7 @@ class _FitLabel(QLabel):
             font.setPixelSize(pixels)
             self.setFont(font)
 
+    @override
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.fit()
@@ -171,6 +175,7 @@ class _NoteEditor(QPlainTextEdit):
         self.setStyleSheet(EDITOR_STYLE)
         self.hide()
 
+    @override
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
             event.accept()
@@ -178,6 +183,7 @@ class _NoteEditor(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
+    @override
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         if event.reason() != Qt.FocusReason.PopupFocusReason:  # not for the editor's own context menu
@@ -211,6 +217,7 @@ class BoxNodeWidget(NodeWidget):
         self._notify_geometry()
 
     @classmethod
+    @override
     def HasParentConnection(cls) -> bool:
         return False
 
@@ -270,12 +277,15 @@ class BoxNodeWidget(NodeWidget):
             self._notify_geometry()
         return width, height
 
+    @override
     def sizeHint(self) -> QSize:
         return QSize(self._box_size)
 
+    @override
     def minimumSizeHint(self) -> QSize:
         return QSize(self._box_size)
 
+    @override
     def _notify_geometry(self) -> None:
         # Unlike other nodes, a box does not take the size of its contents.
         self.updateGeometry()
@@ -283,6 +293,7 @@ class BoxNodeWidget(NodeWidget):
         self._place_handles()
         self.geometryHintChanged.emit()
 
+    @override
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._place_handles()
@@ -369,12 +380,15 @@ class NotesNodeWidget(BoxNodeWidget):
         self._notify_geometry()
 
     @classmethod
+    @override
     def _size_noun(cls) -> str:
         return "note"
 
+    @override
     def GetTypeName(self) -> str:
         return NOTES
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{NOTES} - documents the tree; it is never executed"
 
@@ -506,10 +520,12 @@ class NotesNodeWidget(BoxNodeWidget):
         self._set_box_size(width, height)
 
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         width, height = self.GetNoteSize()
         return {"text": self.GetText(), "width": width, "height": height}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         text = data.get("text")
         if isinstance(text, str):

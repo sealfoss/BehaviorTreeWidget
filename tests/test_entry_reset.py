@@ -514,3 +514,47 @@ def test_shutdown_during_a_tick_writes_the_reset_values(qtbot, bt):
     bt.Execute()
     qtbot.waitUntil(lambda: bt.blackboard_store().is_disposed(), timeout=3000)
     assert file_blackboard(path)[0]["value"] == 1
+
+
+# ============================================================================ Stop with "Restore blackboard values"
+class RemoveCounter(LeafNodeWidget):
+    """Removes the entry "counter" and keeps running."""
+
+    _title = "Remove counter"
+
+    def OnRun(self, tree):
+        if tree.HasEntry("counter"):
+            tree.RemoveEntry("counter")
+        return Status.RUNNING
+
+
+def test_stop_brings_back_a_removed_entry_with_its_reset_flag(qtbot, bt):
+    bt.RegisterNodeType(RemoveCounter)
+    fast_config(bt, restore_blackboard=True)
+    bt.AddEntry("counter", "Integer", 1, reset=True)
+    bt.Connect(bt.GetRootNode(), bt.AddNode("RemoveCounter", 0, 150))
+    bt.Execute()
+    qtbot.waitUntil(lambda: not bt.HasEntry("counter"), timeout=3000)
+    bt.Stop()
+    assert bt.GetEntry("counter") == 1
+    assert bt.GetEntryReset("counter")
+    qtbot.waitUntil(lambda: file_blackboard(bt.GetFilePath()) == [{"name": "counter", "type": "Integer", "value": 1, "reset": True}], timeout=3000)
+
+
+def test_stop_renames_an_entry_back_and_its_nodes_follow(qtbot, bt):
+    fast_config(bt, restore_blackboard=True)
+    bt.AddEntry("counter", "Integer", 1)
+    set_node = bt.AddNode("Set", 0, 150)
+    set_node.SetValueName("counter")
+    root = bt.GetRootNode()
+    bt.Connect(root, set_node)
+    bt.Connect(root, bt.AddNode("Pause", 200, 150))
+    bt.Execute()
+    qtbot.waitUntil(lambda: bt.GetExecutionState() == "Paused", timeout=3000)
+    bt.blackboard_store().rename("counter", "count")  # e.g. in the Blackboard tab while paused
+    QApplication.processEvents()
+    assert set_node.GetValueName() == "count"
+    bt.Stop()
+    QApplication.processEvents()
+    assert bt.GetEntryNames() == ["counter"]
+    assert set_node.GetValueName() == "counter"

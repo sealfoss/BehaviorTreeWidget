@@ -1,7 +1,10 @@
 # Notes and design decisions
 
 * **Children order** is the left-to-right position on the canvas, as in most graphical behavior
-  tree editors. The small numbers on the connection lines show it.
+  tree editors. The small numbers on the connection lines show it. The position is a node's
+  centre, so a node keeps its size while it runs: its Status label has room for the widest
+  status text from the start (a node sized for "Ready" would grow to show "Succeeded", which
+  would move its centre and could reorder it among its siblings).
 * **Loop Execution** is the existing `TreeConfig.repeat` option, so the check box and
   Configure → Execution can never disagree, and the choice is saved with the tree. A new loop
   starts on the tick after the Root returned rather than in the same tick: a tree whose nodes all
@@ -172,6 +175,35 @@ records the measurements behind them.
   `SetFields` are the way to do it, and the assignment is deprecated. The accessors of the
   underlying objects (`main_view()`, `blackboard_store()`, ...) use the snake_case of `view()`,
   `button()` and the `TreeView` methods; their camelCase names are deprecated.
+
+## Python 3.13 (0.10.0)
+
+* **Python 3.13 is the oldest version supported** (3.10 reached its end of life in October
+  2026). The code uses what 3.13 offers:
+  * The camelCase accessors are marked with `warnings.deprecated`, so type checkers and
+    editors flag them, besides the warning at run time.
+  * Every method that overrides one is marked `typing.override`. mypy checks this
+    (`explicit-override`) and rejects `@override` on a method that overrides nothing, so a
+    misspelled Qt event handler, which Qt would never call, cannot go unnoticed.
+  * `NodeStatus` and `ExecutionState` are `StrEnum`s.
+* **PySide6 6.9.1 is the oldest PySide6 supported.** The first one for Python 3.13, 6.8.0.2,
+  and every one up to 6.9.0 crash (access violation) in most runs when a click outside a
+  drop-down list open in a node closes it. Up to 6.10, the wrapper that `QAction.menu()`
+  returns also deletes the submenu when it is garbage collected, so the tests look submenus up
+  by name instead. A CI job runs the tests with the oldest versions supported.
+* **A snapshot of the blackboard knows which entry is which.** Each entry of a store has an
+  identity that follows renames. With it, "Restore blackboard values on Stop / Reset" tells a
+  renamed entry from a removed one: it renames the entry back (the nodes using it follow, as
+  they follow any rename) instead of removing it and creating it again, which would leave the
+  nodes on the new name. The snapshot also holds the Reset flags, which an entry created again
+  would otherwise lose.
+* **Values are compared by type, at every level**, when the blackboard decides whether a
+  value changed (to reset an entry at the end of a loop, or to write the blackboard file):
+  `[1, 0] == [True, False]` and `0.0 == -0.0` in Python, but they are different values in the
+  blackboard file. Evaluation nodes compare numbers by value (`1 == 1.0`) but never a bool with
+  a number, inside containers too.
+* **A removed node is deleted**, with the scene item that holds it, so `AddNode` refuses it
+  rather than accepting a node that is about to be deleted.
 
 ## Writing only the blackboard
 

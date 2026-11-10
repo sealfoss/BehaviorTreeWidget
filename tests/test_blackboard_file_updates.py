@@ -267,3 +267,23 @@ def test_a_failed_write_is_reported_and_retried(qtbot, bt, caplog):
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
     bt.SetEntry(3, "x")
     qtbot.waitUntil(lambda: file_blackboard(path) == [entry("x", "Integer", 3)], timeout=3000)
+
+
+@pytest.mark.parametrize(
+    "type_name, before, after",
+    [("List", [1, 0], [True, False]), ("List", [1, 2], [1.0, 2.0]), ("Double", 0.0, -0.0)],
+    ids=["ints to bools", "ints to floats", "negative zero"],
+)
+def test_a_change_that_compares_equal_is_still_written(qtbot, bt, type_name, before, after):
+    """The writer skips a write when the file already holds the blackboard; ``==`` would take
+    these changes for no change at all."""
+
+    def in_file():
+        items = file_blackboard(bt.GetFilePath())
+        return repr(items[0]["value"]) if items else None
+
+    bt.AddEntry("value", type_name, before)
+    qtbot.waitUntil(lambda: in_file() == repr(before), timeout=3000)
+    bt.SetEntry(after, "value")
+    qtbot.waitUntil(lambda: in_file() == repr(after), timeout=3000)
+    assert not bt.IsModified()

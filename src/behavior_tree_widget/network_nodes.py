@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from typing import override
 
 from .nodes import LeafNodeWidget
 
@@ -52,9 +53,11 @@ class UdpMessageNodeWidget(LeafNodeWidget):
     _fields = {IP_FIELD: "127.0.0.1", PORT_FIELD: 5005, MESSAGE_FIELD: ""}
     SEND_TIMEOUT = 5.0  # seconds
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{UDP_MESSAGE} - sends Message to Destination IP and Destination Port over UDP"
 
+    @override
     def OnRun(self, tree):
         host = self.GetField(self.IP_FIELD)
         port = self.GetField(self.PORT_FIELD)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtWidgets import QFileDialog, QLineEdit, QToolButton, QWidget
 
@@ -69,13 +69,16 @@ class SubTreeNodeWidget(LeafNodeWidget):
         self._sync_file_editor()
         self._notify_geometry()
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{SUB_TREE} - runs the behavior tree in File: succeeds when it succeeds, fails when it fails"
 
+    @override
     def DisplayTitle(self) -> str:
         title = self.GetTitle()
         return title if title == SUB_TREE else f"{title} ({SUB_TREE})"
 
+    @override
     def OnRun(self, tree):
         # The executor runs the sub-tree itself (see execution.TreeExecutor._build).
         raise RuntimeError("a Sub-Tree node runs the tree in its file; it cannot run on its own")
@@ -179,15 +182,19 @@ class SubTreeNodeWidget(LeafNodeWidget):
         edit.setToolTip(path or "The behavior tree file (<name>_BT.json) this node runs")
 
     # The "File" field is shown in the line edit instead of the generic field editors.
+    @override
     def _refresh_all_fields(self) -> None:
         self._sync_file_editor()
 
+    @override
     def _refresh_field_editor(self, key: str) -> None:
         self._sync_file_editor()
 
+    @override
     def _on_added_to_tree(self) -> None:
         self._sync_tooltip()  # relative names now resolve against the tree file's folder
 
+    @override
     def _load_dict(self, data: dict) -> None:
         super()._load_dict(data)
         self._sync_file_editor()

@@ -7,7 +7,7 @@ import copy
 import math
 import reprlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, override
 
 from .._common import INT_MAX, INT_MIN
 
@@ -168,6 +168,7 @@ class _NonFiniteNames(ast.NodeTransformer):
 
     NAMES = {"nan": float("nan"), "inf": float("inf"), "infinity": float("inf")}
 
+    @override
     def visit_Name(self, node: ast.Name) -> ast.AST:
         value = self.NAMES.get(node.id.lower())
         if value is None:
@@ -266,12 +267,29 @@ def _same_value(a: Any, b: Any) -> bool:
 
 
 def _equal_values(a: Any, b: Any) -> bool:
-    """Whether two entry values are equal (scalars as :func:`_same_value`; containers with ``==``)."""
-    containers = (list, tuple, set, frozenset, dict)
-    if isinstance(a, containers) or isinstance(b, containers):
+    """Whether two entry values are the same: of the same types at every level of a container,
+    and scalars compared as :func:`_same_value`. So ``[1, 0]`` differs from ``[True, False]``
+    and ``[0.0]`` from ``[-0.0]``, though ``==`` finds them equal. Dicts are compared in order."""
+    try:
+        return _equal_values_unchecked(a, b)
+    except RecursionError:  # nested too deeply to compare: treated as a change
+        return False
+
+
+def _equal_values_unchecked(a: Any, b: Any) -> bool:
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, (list, tuple)):
+        return len(a) == len(b) and all(_equal_values_unchecked(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict):
+        return len(a) == len(b) and all(
+            _equal_values_unchecked(key_a, key_b) and _equal_values_unchecked(value_a, value_b)
+            for (key_a, value_a), (key_b, value_b) in zip(a.items(), b.items(), strict=True)
+        )
+    if isinstance(a, (set, frozenset)):
         try:
-            return type(a) is type(b) and bool(a == b)
-        except Exception:  # noqa: BLE001
+            return len(a) == len(b) and {(type(x), x) for x in a} == {(type(y), y) for y in b}
+        except Exception:  # noqa: BLE001 - items with a failing __eq__ or __hash__
             return False
     return _same_value(a, b)
 

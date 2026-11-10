@@ -39,7 +39,7 @@ import logging
 import math
 import weakref
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import shiboken6
 from PySide6.QtCore import QEvent, QLineF, QObject, QPoint, QPointF, QRect, QRectF, Qt, Signal
@@ -148,6 +148,7 @@ class _OutsideClickFilter(QObject):
         super().__init__(view)
         self._view = view
 
+    @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() != QEvent.Type.MouseButtonPress:
             return False
@@ -184,6 +185,7 @@ class Hit:
         self.connection = connection
         self.widget = widget
 
+    @override
     def __repr__(self) -> str:
         return f"Hit({self.kind!r}, node={self.node!r}, label={self.label_kind!r})"
 
@@ -284,10 +286,12 @@ class TreeView(QGraphicsView):
             app.removeEventFilter(self._outside_filter)
         self._outside_filter_installed = install
 
+    @override
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._set_outside_filter(False)
 
+    @override
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._set_outside_filter(self._selected_connection is not None)
@@ -369,6 +373,9 @@ class TreeView(QGraphicsView):
     def add_node(self, node: NodeWidget, pos: QPointF | tuple[float, float] | None = None) -> NodeItem:
         """Add ``node`` with its top-left corner at scene position ``pos`` (default: the origin)."""
         self._check_unlocked()
+        if node._removed or not shiboken6.isValid(node):
+            # Its old item deletes it (deleteLater) or already has.
+            raise ValueError(f"this {type(node).__name__} was removed from a tree, which deletes it; add a new node")
         if node._item is not None:
             raise ValueError(f"{node!r} is already part of a tree view")
         if isinstance(node, RootNodeWidget) and self.document.root() is not None:
@@ -414,6 +421,7 @@ class TreeView(QGraphicsView):
         item = node._item
         node._canvas = None
         node._item = None
+        node._removed = True
         if item is not None:
             item.geometryChanged.disconnect(item._on_geometry_changed)
             self.scene().removeItem(item)
@@ -681,6 +689,7 @@ class TreeView(QGraphicsView):
             active.cancel()
         self.viewport().unsetCursor()
 
+    @override
     def mousePressEvent(self, event) -> None:
         active = self._active
         if active is not None:
@@ -802,6 +811,7 @@ class TreeView(QGraphicsView):
         Hit.NODE: _press_node,
     }
 
+    @override
     def mouseMoveEvent(self, event) -> None:
         active = self._active
         if active is not None and active.kind is not GestureKind.PASSTHROUGH and not active.holds(event.buttons()):
@@ -812,6 +822,7 @@ class TreeView(QGraphicsView):
         else:
             active.move(event.position().toPoint(), event)
 
+    @override
     def mouseReleaseEvent(self, event) -> None:
         active = self._active
         if active is None:
@@ -821,6 +832,7 @@ class TreeView(QGraphicsView):
         if active.kind is not GestureKind.PASSTHROUGH:
             event.accept()
 
+    @override
     def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             hit = self.hit_test(event.position().toPoint())
@@ -925,6 +937,7 @@ class TreeView(QGraphicsView):
             return False  # likewise for a group whose name editor does not have the keyboard
         return item is not None
 
+    @override
     def event(self, event) -> bool:
         if (
             event.type() == QEvent.Type.ShortcutOverride
@@ -935,6 +948,7 @@ class TreeView(QGraphicsView):
             return True
         return super().event(event)
 
+    @override
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if key == Qt.Key.Key_Escape:
@@ -1017,6 +1031,7 @@ class TreeView(QGraphicsView):
             self.ensureVisible(area, 40, 40)
         return pasted
 
+    @override
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         reason = event.reason()
@@ -1031,6 +1046,7 @@ class TreeView(QGraphicsView):
         # anywhere else" deselects a selected connection.
         self.select_connection(None)
 
+    @override
     def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             steps = event.angleDelta().y() / 120.0
@@ -1046,6 +1062,7 @@ class TreeView(QGraphicsView):
         self.navigated.emit()
 
     # ================================================================== context menus
+    @override
     def contextMenuEvent(self, event) -> None:
         if self._gesture is not GestureKind.IDLE:
             event.accept()
@@ -1179,6 +1196,7 @@ class TreeView(QGraphicsView):
             self.modified.emit()
 
     # ================================================================== painting
+    @override
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.EnabledChange:
@@ -1186,6 +1204,7 @@ class TreeView(QGraphicsView):
                 self._reset_gesture()
             self.viewport().update()
 
+    @override
     def drawBackground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         palette = self.palette()
         base = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Base)
@@ -1214,6 +1233,7 @@ class TreeView(QGraphicsView):
                 painter.drawLines(batch)
         painter.restore()
 
+    @override
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
         if not self.isEnabled():
@@ -1221,6 +1241,7 @@ class TreeView(QGraphicsView):
             # already painted (SmartViewportUpdate) and repaints only the uncovered strip.
             self.viewport().update()
 
+    @override
     def drawForeground(self, painter: QPainter, rect: QRectF | QRect) -> None:
         if self.isEnabled():
             return

@@ -21,7 +21,7 @@ import traceback
 import weakref
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, override
 
 import py_trees
 from py_trees.common import Status
@@ -149,6 +149,7 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
         self._started = False
         self._active = False
 
+    @override
     def initialise(self) -> None:
         self.error = None
         self.feedback_message = ""
@@ -159,6 +160,7 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
         self.node._run_token = self.token
         self._active = True
 
+    @override
     def update(self) -> Status:
         if self.executor.is_aborting() or (self.token is not None and self.token.is_cancelled()):
             # A Stop/Reset is pending: run no user code. RUNNING keeps py_trees from terminating the
@@ -256,6 +258,7 @@ class LeafBehaviour(py_trees.behaviour.Behaviour):
         if self.token is not None:
             self.token.cancel()
 
+    @override
     def terminate(self, new_status: Status) -> None:
         if self._future is not None:
             # Interrupted while OnRun is still executing on its worker thread.
@@ -296,6 +299,7 @@ class FailingBehaviour(py_trees.behaviour.Behaviour):
         super().__init__(name=name)
         self.error = error
 
+    @override
     def update(self) -> Status:
         self.feedback_message = self.error
         return Status.FAILURE
@@ -305,7 +309,7 @@ class SubTreeBehaviour(py_trees.decorators.Decorator):
     """Runs the tree of a Sub-Tree node: runs, succeeds and fails as that tree's Root does.
 
     When the sub-tree fails because one of its nodes failed with an error, ``error`` names
-    that node and its error.
+    that node and its error (see :meth:`_failure_error`).
     """
 
     def __init__(self, name: str, child: py_trees.behaviour.Behaviour, leaves: list):
@@ -313,10 +317,12 @@ class SubTreeBehaviour(py_trees.decorators.Decorator):
         self.leaves = leaves  # the sub-tree's leaf behaviours (for error messages)
         self.error: str | None = None
 
+    @override
     def initialise(self) -> None:
         self.error = None
         self.feedback_message = ""
 
+    @override
     def update(self) -> Status:
         status = self.decorated.status
         if status == Status.INVALID:  # not expected after a tick; never report "not run" as a result
@@ -326,11 +332,24 @@ class SubTreeBehaviour(py_trees.decorators.Decorator):
         return status
 
     def _failure_error(self) -> str | None:
-        for behaviour in self.leaves:
-            error = getattr(behaviour, "error", None)
-            if error and behaviour.status == Status.FAILURE:
-                return f"{behaviour.name}: {error}"
-        return None
+        """The error of the leaf whose failure made the sub-tree fail, if it failed with one.
+
+        That leaf is found by following the failed child of each composite down from the
+        sub-tree's Root (a leaf that failed earlier with an error, and whose parent went on to
+        another child, is not the cause).
+        """
+        behaviour: py_trees.behaviour.Behaviour | None = self.decorated
+        while behaviour is not None and behaviour not in self.leaves:
+            if isinstance(behaviour, py_trees.composites.Composite):
+                behaviour = behaviour.current_child
+            elif isinstance(behaviour, py_trees.decorators.Decorator):
+                behaviour = behaviour.decorated
+            else:
+                return None
+        error = getattr(behaviour, "error", None)
+        if behaviour is None or not error or behaviour.status != Status.FAILURE:
+            return None
+        return f"{behaviour.name}: {error}"
 
 
 class TickVisitor(py_trees.visitors.VisitorBase):
@@ -361,6 +380,7 @@ class TickVisitor(py_trees.visitors.VisitorBase):
         self._running_now: set = set()  # visited behaviours that reported RUNNING
         self._logging = False
 
+    @override
     def initialise(self) -> None:
         # Statuses may have changed between ticks (Stop, Reset, a new loop): keep what still runs.
         running = self.running
@@ -371,6 +391,7 @@ class TickVisitor(py_trees.visitors.VisitorBase):
         executor = self._executor_ref()
         self._logging = executor is not None and executor.log_enabled(LogLevel.INFO)
 
+    @override
     def run(self, behaviour: py_trees.behaviour.Behaviour) -> None:
         visited = self.visited
         if behaviour in visited or behaviour not in self.labels:
@@ -395,6 +416,7 @@ class TickVisitor(py_trees.visitors.VisitorBase):
             what += f" ({error})"
         self._write(f"Node {self.labels[behaviour]} {what}")
 
+    @override
     def finalise(self) -> None:
         visited = self.visited
         not_ticked = [behaviour for behaviour in self.running_before if behaviour not in visited]

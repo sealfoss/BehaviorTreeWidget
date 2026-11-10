@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins  # set[...] in this class would name its set() method
 import copy
+import itertools
 import logging
 import threading
 import uuid
@@ -27,9 +28,25 @@ from .values import (
     infer_type,
 )
 
-__all__ = ["BlackboardStore"]
+__all__ = ["BlackboardSnapshot", "BlackboardStore"]
 
 log = logging.getLogger("behavior_tree_widget")
+
+
+class BlackboardSnapshot(list):
+    """What :meth:`BlackboardStore.snapshot` returns: a list of ``(name, type, value)`` tuples in
+    display order, which also holds the Reset flags and which entry is which.
+
+    With those, :meth:`BlackboardStore.restore` gives entries renamed since the snapshot their
+    names back (as renames, which the nodes using them follow) and puts back the Reset flags of
+    every entry, also of entries removed since. A plain list of tuples can be restored too.
+    """
+
+    def __init__(self, entries=(), resets=(), ids: dict[str, int] | None = None, store: str = "") -> None:
+        super().__init__(entries)
+        self.resets: frozenset[str] = frozenset(resets)  # names of the entries with the Reset flag
+        self.ids: dict[str, int] = dict(ids or {})  # {name: identity of the entry in its store}
+        self.store = store  # namespace of the store the snapshot was taken from
 
 
 class BlackboardStore(QObject):
@@ -56,6 +73,10 @@ class BlackboardStore(QObject):
         self._lock = threading.RLock()
         self._types: dict[str, str] = {}
         self._reset: set[str] = set()  # entries put back to their loop-start value after each loop
+        # The identity of each entry: it follows renames, so a snapshot can tell a renamed entry
+        # from a removed one (see restore).
+        self._ids: dict[str, int] = {}
+        self._next_id = itertools.count(1)
         # While an execution loop runs: the value each entry had when the loop started, recorded
         # just before its first change in the loop ({name: (type, value)}, or None for an entry
         # created during the loop, which has no loop-start value); None while no loop runs.
@@ -303,6 +324,7 @@ class BlackboardStore(QObject):
             self._client.register_key(key=name, access=py_trees.common.Access.WRITE)
             self._client.set(self.key(name), value, overwrite=True)
             self._types[name] = type_name
+            self._ids[name] = next(self._next_id)
             if self._loop_capture is not None:
                 self._loop_capture[name] = None  # created during the loop: it has no loop-start value
             if reset:
@@ -365,6 +387,7 @@ class BlackboardStore(QObject):
             self._check_writable("RemoveEntry")
             type_name = self.type_of(name)
             del self._types[name]
+            del self._ids[name]
             self._bump_locked(type_name != "Object")
             self._reset.discard(name)
             if self._loop_capture is not None:
@@ -387,6 +410,7 @@ class BlackboardStore(QObject):
             self._client.set(self.key(new), value, overwrite=True)
             # keep the display position of the renamed entry
             self._types = {(new if key == old else key): kind for key, kind in self._types.items()}
+            self._ids[new] = self._ids.pop(old)
             if old in self._reset:  # the Reset flag and the loop-start value follow the entry
                 self._reset.discard(old)
                 self._reset.add(new)
@@ -438,14 +462,16 @@ class BlackboardStore(QObject):
             self.entriesReordered.emit()
 
     # ------------------------------------------------------------------ snapshots / persistence
-    def snapshot(self) -> list[tuple[str, str, Any]]:
-        """Copy of all entries (for restoring later with :meth:`restore`).
+    def snapshot(self) -> BlackboardSnapshot:
+        """Copy of all entries and their Reset flags (for restoring later with :meth:`restore`).
 
         Values are deep copied, except Object entries, which are run-time objects
         (e.g. device handles) and are kept by reference.
         """
         with self._lock:
-            result = []
+            result = BlackboardSnapshot(
+                resets=self._reset & self._types.keys(), ids=self._ids, store=self._namespace
+            )
             for name, type_name in self._types.items():
                 value = self._client.get(self.key(name))
                 if type_name != "Object":
@@ -457,11 +483,18 @@ class BlackboardStore(QObject):
             return result
 
     def restore(self, snapshot: list[tuple[str, str, Any]]) -> None:
-        """Make the blackboard contain exactly the entries of ``snapshot`` (in its order)."""
+        """Make the blackboard contain exactly the entries of ``snapshot`` (in its order).
+
+        Given a :class:`BlackboardSnapshot` of this store, entries renamed since get their old
+        names back by being renamed, and every entry gets back its Reset flag. Given a plain
+        list, an entry keeps its Reset flag, and one that is created again has none.
+        """
         with self.batch(), self._lock:
             if self._disposed:
                 return
             wanted = [name for name, _, _ in snapshot]
+            if isinstance(snapshot, BlackboardSnapshot) and snapshot.store == self._namespace:
+                self._undo_renames_locked(snapshot.ids)
             for name in self.names():
                 if name not in wanted:
                     self.remove(name)
@@ -473,6 +506,28 @@ class BlackboardStore(QObject):
                         pass
                 self.replace(name, type_name, value)
             self.reorder(wanted)
+            if isinstance(snapshot, BlackboardSnapshot):
+                for name in wanted:
+                    self.set_reset(name, name in snapshot.resets)
+
+    def _undo_renames_locked(self, ids: dict[str, int]) -> None:
+        """Remove the entries created since a snapshot with these ``{name: identity}`` and rename
+        the entries renamed since back (caller holds the lock)."""
+        names = {identity: name for name, identity in ids.items()}
+        for name in [name for name in self._types if self._ids[name] not in names]:
+            self.remove(name)
+        # {current name: name in the snapshot} of the renamed entries
+        pending = {name: names[self._ids[name]] for name in self._types if names[self._ids[name]] != name}
+        while pending:
+            free = [current for current, old in pending.items() if old not in self._types]
+            if free:
+                current = free[0]
+                self.rename(current, pending.pop(current))
+            else:  # every old name is taken by another renamed entry (names were swapped)
+                current, old = pending.popitem()
+                aside = next(f"{current}~{n}" for n in itertools.count(1) if f"{current}~{n}" not in self._types)
+                self.rename(current, aside)
+                pending[aside] = old
 
     def to_list(self, problems: list[str] | None = None, quiet: bool = False) -> list[dict]:
         """Entries as JSON-compatible dicts (``name``, ``type``, ``value``, and ``reset: true``
@@ -598,6 +653,7 @@ class BlackboardStore(QObject):
             self._disposed = True
             names = list(self._types)
             self._types.clear()
+            self._ids.clear()
             self._bump_locked(True)
             self._reset.clear()
             self._loop_capture = None

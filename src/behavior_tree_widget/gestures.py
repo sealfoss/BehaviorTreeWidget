@@ -21,7 +21,7 @@ moves and the release, and ends it. Each gesture keeps its own state:
 from __future__ import annotations
 
 import enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, QSizeF, Qt
 from PySide6.QtWidgets import QApplication, QGraphicsView
@@ -104,18 +104,22 @@ class PassThroughGesture(Gesture):
 
     kind = GestureKind.PASSTHROUGH
 
+    @override
     def holds(self, buttons: Qt.MouseButton) -> bool:
         return True
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         QGraphicsView.mouseMoveEvent(self.view, event)
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         view = self.view
         QGraphicsView.mouseReleaseEvent(view, event)
         if not (event.buttons() & LEFT_BUTTON) and view._active is self:
             view._active = None
 
+    @override
     def abandon(self) -> bool:
         # The node that received the press still holds the scene's implicit mouse grab.
         grabber = self.view.scene().mouseGrabberItem()
@@ -138,9 +142,11 @@ class PanGesture(Gesture):
         self.panned = False
         self.toggles = toggles  # a Ctrl + click (without dragging) on this node toggles it in the selection
 
+    @override
     def holds(self, buttons: Qt.MouseButton) -> bool:
         return bool(buttons & self.button)
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         view = self.view
         if (
@@ -161,6 +167,7 @@ class PanGesture(Gesture):
         view._last_view_pos = pos
         event.accept()
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         if event.button() != self.button:
             return
@@ -197,6 +204,7 @@ class MoveGesture(Gesture):
             view.raise_node(member)
         view.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         view = self.view
         if (
@@ -215,6 +223,7 @@ class MoveGesture(Gesture):
                 member._item.setPos(start + offset)
         event.accept()
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         if event.button() != LEFT_BUTTON:
             return
@@ -229,9 +238,11 @@ class MoveGesture(Gesture):
         if isinstance(node, NotesNodeWidget) and view._is_current(node) and node._item is not None:
             node.begin_editing(node._item.mapFromScene(press))  # a click on the text of a note edits it
 
+    @override
     def abandon(self) -> bool:
         return self.moved
 
+    @override
     def involves(self, node: NodeWidget) -> bool:
         return node is self.node or any(member is node for member, _ in self.group)
 
@@ -262,6 +273,7 @@ class ResizeGesture(Gesture):
         view.raise_node(node)
         view.viewport().setCursor(handle.cursor())
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         self.view._last_view_pos = pos
         self.update(pos)
@@ -290,6 +302,7 @@ class ResizeGesture(Gesture):
         if (width, height) != (start.width(), start.height()):
             self.resized = True
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         if event.button() != LEFT_BUTTON:
             return
@@ -303,9 +316,11 @@ class ResizeGesture(Gesture):
         elif clicked is not None:
             view.select_nodes([clicked])
 
+    @override
     def abandon(self) -> bool:
         return self.resized
 
+    @override
     def involves(self, node: NodeWidget) -> bool:
         return node is self.node
 
@@ -324,6 +339,7 @@ class BandGesture(Gesture):
         self.band: SelectionBandItem | None = SelectionBandItem()
         view.scene().addItem(self.band)
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         self.view._last_view_pos = pos
         self.update(pos)
@@ -349,17 +365,20 @@ class BandGesture(Gesture):
                 touched.append(node)
         view._set_selection({**self.base, **dict.fromkeys(touched)})
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         if event.button() != LEFT_BUTTON:
             return
         self.update(pos)
         self.view._reset_gesture()
 
+    @override
     def cancel(self) -> None:
         band, self.band = self.band, None
         if band is not None and band.scene() is self.view.scene():
             self.view.scene().removeItem(band)
 
+    @override
     def forget(self, node: NodeWidget) -> None:
         self.base.pop(node, None)
 
@@ -391,9 +410,11 @@ class ConnectGesture(Gesture):
         """The labels shown in the "placing" colour: the source and the compatible label hovered."""
         return {pair for pair in (self.source, self.hover) if pair is not None}
 
+    @override
     def involves(self, node: NodeWidget) -> bool:
         return any(pair is not None and pair[0] is node for pair in (self.source, self.hover))
 
+    @override
     def move(self, pos: QPoint, event) -> None:
         self.view._last_view_pos = pos
         self.update(pos)
@@ -427,6 +448,7 @@ class ConnectGesture(Gesture):
         self.line.set_valid(self.hover is not None)
         self.line.set_endpoints(anchor_point(node, label_kind), label_kind, cursor)
 
+    @override
     def release(self, pos: QPoint, event) -> None:
         if event.button() != LEFT_BUTTON:
             return
@@ -446,6 +468,7 @@ class ConnectGesture(Gesture):
         line, self.line = self.line, None
         return line
 
+    @override
     def cancel(self) -> None:
         self.finish(None)
 

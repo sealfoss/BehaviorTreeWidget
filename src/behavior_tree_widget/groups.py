@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, cast
+from typing import Any, cast, override
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSizeF, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent
@@ -128,12 +128,15 @@ class GroupNodeWidget(BoxNodeWidget):
         self._fit_name_edit()
 
     @classmethod
+    @override
     def _size_noun(cls) -> str:
         return "group"
 
+    @override
     def GetTypeName(self) -> str:
         return GROUP
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{GROUP} - drag its title bar to move it with everything inside it"
 
@@ -144,6 +147,7 @@ class GroupNodeWidget(BoxNodeWidget):
         assert edit is not None, "found in __init__"
         return edit
 
+    @override
     def _refresh_title(self) -> None:
         super()._refresh_title()
         edit = self._name_edit
@@ -168,6 +172,7 @@ class GroupNodeWidget(BoxNodeWidget):
         if edit.text() != text:
             self._refresh_title()
 
+    @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self._name_edit and watched is not None:
             kind = event.type()
@@ -260,6 +265,7 @@ class GroupNodeWidget(BoxNodeWidget):
         check_not_cancelled("SetGroupSize")
         self._set_box_size(width, height)
 
+    @override
     def _notify_geometry(self) -> None:
         super()._notify_geometry()
         self._fit_name_edit()
@@ -282,10 +288,12 @@ class GroupNodeWidget(BoxNodeWidget):
         return canvas.group_contents(self) if canvas is not None else []
 
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         width, height = self.GetBoxSize()
         return {"width": width, "height": height, "color": self.GetBorderColor()}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         color = data.get("color")
         if color is not None:

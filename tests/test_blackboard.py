@@ -1907,3 +1907,86 @@ def test_container_tooltips_are_exact_for_small_values(widget):
 def test_safe_repr_of_large_bytes_is_cheap_and_short():
     text = safe_repr(b"x" * 10_000_000)
     assert len(text) <= 500 and "10000000 bytes" in text
+
+
+# ============================================================================ snapshots: renames and Reset flags
+def test_restore_brings_back_a_removed_entry_with_its_reset_flag(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.add("other", "Integer", 2)
+    snapshot = store.snapshot()
+    store.remove("counter")
+    store.set_reset("other", True)
+    store.restore(snapshot)
+    assert store.names() == ["counter", "other"]
+    assert store.get("counter") == 1
+    assert store.reset_names() == ["counter"], "the Reset flags are those of the snapshot"
+
+
+def test_restore_renames_a_renamed_entry_back(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.add("last", "String", "x")
+    snapshot = store.snapshot()
+    store.rename("counter", "count")
+    store.set("count", 5)
+    renames, removed = [], []
+    store.entryRenamed.connect(lambda old, new: renames.append((old, new)))
+    store.entryRemoved.connect(removed.append)
+    store.restore(snapshot)
+    assert renames == [("count", "counter")], "nodes that followed the rename follow it back"
+    assert removed == []
+    assert store.items() == [("counter", "Integer", 1), ("last", "String", "x")]
+    assert store.reset_names() == ["counter"]
+
+
+def test_restore_undoes_swapped_names(qapp):
+    store = BlackboardStore()
+    store.add("a", "Integer", 1)
+    store.add("b", "String", "two")
+    snapshot = store.snapshot()
+    store.rename("a", "tmp")
+    store.rename("b", "a")
+    store.rename("tmp", "b")
+    store.restore(snapshot)
+    assert store.items() == [("a", "Integer", 1), ("b", "String", "two")]
+
+
+def test_restore_removes_an_entry_created_under_the_old_name_of_a_renamed_one(qapp):
+    store = BlackboardStore()
+    store.add("a", "Integer", 1)
+    snapshot = store.snapshot()
+    store.rename("a", "b")
+    store.add("a", "String", "new")
+    store.restore(snapshot)
+    assert store.items() == [("a", "Integer", 1)]
+
+
+def test_restore_of_a_plain_list_keeps_the_reset_flags(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    store.restore([("counter", "Integer", 4), ("new", "Integer", 0)])
+    assert store.items() == [("counter", "Integer", 4), ("new", "Integer", 0)]
+    assert store.reset_names() == ["counter"]
+
+
+def test_a_snapshot_is_a_list_of_entries(qapp):
+    store = BlackboardStore()
+    store.add("counter", "Integer", 1, reset=True)
+    assert store.snapshot() == [("counter", "Integer", 1)]
+    assert store.snapshot().resets == {"counter"}
+
+
+@pytest.mark.parametrize(
+    "start, changed",
+    [([1, 0], [True, False]), ([0.0], [-0.0]), ({"k": 1}, {"k": 1.0}), ((1,), (True,)), ({1}, {True})],
+    ids=["bools", "negative zero", "dict value", "tuple", "set"],
+)
+def test_reset_entries_tells_values_apart_that_compare_equal(qapp, start, changed):
+    """``==`` takes [1, 0] for [True, False]: the entry would not be reset."""
+    store = BlackboardStore()
+    store.add("value", "Object", start, reset=True)
+    store.start_loop_capture()
+    store.set("value", changed)
+    assert store.reset_entries(store.finish_loop_capture()) == ["value"]
+    assert store.get("value") is start  # an Object entry is kept by reference

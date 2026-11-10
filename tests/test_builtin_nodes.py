@@ -617,6 +617,21 @@ def test_values_equal_does_not_mix_bools_and_numbers():
     assert values_equal(False, False)
 
 
+@pytest.mark.parametrize(
+    "a, b",
+    [([True], [1]), ([1, 0], [True, False]), ((False,), (0,)), ({"k": True}, {"k": 1}), ({True}, {1}), ([[1]], [[True]])],
+)
+def test_values_equal_does_not_mix_bools_and_numbers_in_containers(a, b):
+    assert not values_equal(a, b)
+    assert not values_equal(b, a)
+
+
+def test_values_equal_compares_numbers_in_containers_by_value():
+    assert values_equal([1, 2.0], [1.0, 2])
+    assert values_equal({"k": [1]}, {"k": [1.0]})
+    assert not values_equal([1, 2], (1, 2))
+
+
 # ============================================================================ Evaluation / Set: API
 def test_typed_api(bt):
     add_entries(bt, ["i", "i2"])

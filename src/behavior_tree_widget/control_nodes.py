@@ -7,6 +7,8 @@ after it).
 
 from __future__ import annotations
 
+from typing import override
+
 from py_trees.common import Status
 
 from .nodes import LeafNodeWidget
@@ -19,9 +21,11 @@ class RestartNodeWidget(LeafNodeWidget):
     _title = "Restart"
     RUN_IN_THREAD = False
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{self.TYPE_NAME} - restarts the tree from the Root"
 
+    @override
     def OnRun(self, tree):
         tree.Reset()  # while running, Reset starts the tree over on the next tick
         return Status.RUNNING
@@ -35,12 +39,15 @@ class PauseNodeWidget(LeafNodeWidget):
     RUN_IN_THREAD = False
     _pause_requested = False
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{self.TYPE_NAME} - pauses the tree here; it continues when Execute is pressed"
 
+    @override
     def OnStart(self, tree) -> None:
         self._pause_requested = False
 
+    @override
     def OnRun(self, tree):
         if self._pause_requested:
             return True  # resumed
@@ -56,9 +63,11 @@ class StopNodeWidget(LeafNodeWidget):
     _title = "Stop"
     RUN_IN_THREAD = False
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{self.TYPE_NAME} - stops the tree, as the Stop button does"
 
+    @override
     def OnRun(self, tree):
         tree.Stop()
         return Status.RUNNING

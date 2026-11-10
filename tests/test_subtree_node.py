@@ -366,6 +366,31 @@ def test_an_error_inside_the_sub_tree_is_reported_on_the_node(qtbot, tree, tmp_p
     assert node.GetError().startswith("Exploder: OnRun raised ValueError: boom")
 
 
+def test_the_error_of_a_node_that_did_not_make_the_sub_tree_fail_is_not_reported(qtbot, tree, tmp_path):
+    """Root -> [Selector -> [Raise, Succeed], Fail]: the Selector succeeds although Raise failed
+    with an error; the sub-tree fails because of Fail, which has no error."""
+    nodes = [
+        node_item("sel", "Selector", -100.0, 200.0, memory=True),
+        node_item("r", "Raise", -200.0, 400.0, title="Exploder"),
+        node_item("ok", "Succeed", 0.0, 400.0),
+        node_item("f", "FailNode", 200.0, 200.0),
+    ]
+    write_tree(tmp_path / "mixed_BT.json", nodes, [("root", "sel"), ("sel", "r"), ("sel", "ok"), ("root", "f")])
+    node = add_subtree(tree, "mixed_BT.json")
+    assert execute(qtbot, tree) == ["Failed"]
+    assert node.GetStatus() is NodeStatus.FAILED
+    assert node.GetError() is None
+
+
+def test_the_error_of_the_node_that_made_the_sub_tree_fail_is_reported(qtbot, tree, tmp_path):
+    """Root (Selector) -> [Fail, Raise]: every child failed; the last one, Raise, ended the run."""
+    nodes = [node_item("f", "FailNode", -100.0, 200.0), node_item("r", "Raise", 100.0, 200.0, title="Exploder")]
+    write_tree(tmp_path / "last_BT.json", nodes, [("root", "f"), ("root", "r")], composite="Selector")
+    node = add_subtree(tree, "last_BT.json")
+    assert execute(qtbot, tree) == ["Failed"]
+    assert node.GetError().startswith("Exploder: OnRun raised ValueError: boom")
+
+
 def test_an_unknown_node_type_in_the_sub_tree_fails(qtbot, tree, tmp_path):
     write_tree(tmp_path / "unknown_BT.json", [node_item("u", "NotRegisteredAnywhere")], [("root", "u")])
     node = add_subtree(tree, "unknown_BT.json")

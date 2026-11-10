@@ -13,9 +13,9 @@ import json
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QContextMenuEvent
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QLineEdit, QMenu
 
 from behavior_tree_widget import BehaviorTreeWidget, GroupNodeWidget, LeafNodeWidget
 from behavior_tree_widget.canvas import GROUP_Z_BASE, NOTE_Z_BASE, Hit
@@ -70,15 +70,15 @@ def context_menu(bt, dialogs, point: QPoint):
 
 
 def action(menu, name: str):
-    for candidate in menu.actions():
-        if candidate.objectName() == name:
-            return candidate
-        sub = candidate.menu()
-        if sub is not None:
-            for inner in sub.actions():
-                if inner.objectName() == name:
-                    return inner
-    raise AssertionError(f"menu has no action {name!r}")
+    """The action named ``name`` in ``menu`` or one of its submenus.
+
+    Found with findChild, not through QAction.menu(): before PySide6 6.11, the wrapper that
+    QAction.menu() returns deletes the submenu when it is garbage collected.
+    """
+    found = menu.findChild(QAction, name)
+    if found is None:
+        raise AssertionError(f"menu has no action {name!r}")
+    return found
 
 
 def saved_nodes(path) -> list[dict]:
@@ -138,6 +138,16 @@ def test_new_and_load_count_from_the_groups_of_the_tree(bt, make_widget, tmp_pat
     assert other.AddNode(GROUP, 0, 1200).GetTitle() == "group_006"
     assert other.NewTree(str(tmp_path / "fresh"))
     assert other.AddNode(GROUP, 0, 600).GetTitle() == "group_001"
+
+
+def test_after_load_the_counter_starts_after_the_groups_of_the_tree_even_once_they_are_deleted(bt, tmp_path):
+    for index in range(5):
+        bt.AddNode(GROUP, 0, 600 + 300 * index)
+    assert bt.SaveTree(str(tmp_path / "groups"))
+    assert bt.LoadTree(str(tmp_path / "groups_BT.json"))
+    for group in [node for node in bt.GetNodes() if isinstance(node, GroupNodeWidget)]:
+        bt.RemoveNode(group)
+    assert bt.AddNode(GROUP, 0, 600).GetTitle() == "group_006"  # a group name becomes a file name on Promote
 
 
 def test_a_pasted_copy_gets_the_next_default_name(bt):
@@ -268,9 +278,8 @@ def test_the_group_menu(bt, dialogs):
     menu = context_menu(bt, dialogs, header_point(bt, group))
     names = [a.objectName() for a in menu.actions() if a.objectName()]
     assert names == ["Rename", "SelectContents", "PromoteToSubTree", "Delete"]
-    border = [a for a in menu.actions() if a.menu() is not None]
-    assert [a.text() for a in border] == ["Border Color"]
-    submenu = border[0].menu()
+    submenu = menu.findChild(QMenu, "BorderColor")
+    assert [a.text() for a in menu.actions() if a is submenu.menuAction()] == ["Border Color"]
     assert [a.text() for a in submenu.actions() if a.text()] == [*GROUP_COLORS, "Custom..."]
     assert action(menu, "Color_Blue").isChecked()
 

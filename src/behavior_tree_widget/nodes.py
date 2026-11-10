@@ -38,12 +38,13 @@ import threading
 import uuid
 import warnings
 import weakref
-from enum import Enum
+from enum import Enum, StrEnum
 from operator import itemgetter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -99,16 +100,13 @@ SELECTOR = "Selector"
 COMPOSITE_TYPES = (SEQUENCE, SELECTOR)
 NEGATION = "Negation"
 
-class NodeStatus(str, Enum):
-    """Execution state displayed by a node's Status label."""
+class NodeStatus(StrEnum):
+    """Execution state displayed by a node's Status label (``str()`` gives the text shown)."""
 
     READY = "Ready"
     RUNNING = "Running"
     SUCCEEDED = "Succeeded"
     FAILED = "Failed"
-
-    def __str__(self) -> str:
-        return self.value
 
     @classmethod
     def from_py_trees(cls, status) -> NodeStatus:
@@ -158,12 +156,33 @@ def _status_style(status: NodeStatus) -> str:
     return f"QLabel {{ color: {STATUS_COLORS[status]}; font-weight: {weight}; }}"
 
 
+_status_widths: dict[str, int] = {}  # {font key: width of the widest status text in bold}
+
+
+def _fit_every_status(label: QLabel) -> None:
+    """Give the Status label room for every status text, so the node keeps its size (and its
+    centre, which orders it among its siblings) when its status changes."""
+    font = label.font()
+    width = _status_widths.get(font.key())
+    if width is None:
+        bold = QFont(font)
+        bold.setBold(True)
+        metrics = QFontMetrics(bold)
+        width = max(max(metrics.horizontalAdvance(s.value), metrics.boundingRect(s.value).width()) for s in NodeStatus)
+        _status_widths[font.key()] = width
+    margins = label.contentsMargins()
+    label.setMinimumWidth(
+        max(label.minimumWidth(), width + margins.left() + margins.right() + 2 * label.margin() + label.indent() + 1)
+    )
+
+
 class _WheelGuard(QObject):
     """Stops spin boxes / combo boxes from grabbing wheel events unless they have focus.
 
     Without this, scrolling the tree view over a node would change field values.
     """
 
+    @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Wheel and isinstance(watched, QWidget) and not watched.hasFocus():
             event.ignore()
@@ -258,6 +277,7 @@ class NodeWidget(QWidget):
     # Defaults of instance attributes that hooks may read before the constructors set them
     # (a hook overridden by a subclass can run while a base class is being constructed).
     _node_ready = False  # True once NodeWidget.__init__ has finished
+    _removed = False  # True once removed from a tree view, which deletes the node
     _tree_ref: weakref.ReferenceType[BehaviorTreeWidget] | None = None  # the BehaviorTreeWidget (see _tree)
     _canvas: TreeView | None = None  # the view showing the node, while it is in one
     _item: NodeItem | None = None  # the scene item embedding this widget, while it is in a view
@@ -341,12 +361,14 @@ class NodeWidget(QWidget):
             if label is not None:
                 label.setCursor(Qt.CursorShape.CrossCursor)
 
+        _fit_every_status(self._status_label)
         self._refresh_title()
         self._refresh_status()
         self.set_connection_state(PARENT, ConnectionState.DISCONNECTED)
         self.set_connection_state(CHILDREN, ConnectionState.DISCONNECTED)
         self._node_ready = True
 
+    @override
     def __setattr__(self, name: str, value: Any) -> None:
         # Deprecated: assigning _title / _fields after construction updates the node, as
         # SetTitle / SetFields do. Values assigned before NodeWidget.__init__ are initial values.
@@ -795,6 +817,7 @@ class NodeWidget(QWidget):
     def _load_dict(self, data: dict) -> None:
         """Restore data written by :meth:`_to_dict`."""
 
+    @override
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.GetTitle()!r} {self._id[:8]}>"
 
@@ -821,13 +844,16 @@ class CompositeNodeWidget(NodeWidget):
         self._memory = bool(memory)
         super().__init__(parent)
 
+    @override
     def _default_title(self) -> str:
         return self._composite_type
 
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return True
 
+    @override
     def GetTypeName(self) -> str:
         return self._composite_type
 
@@ -860,18 +886,22 @@ class CompositeNodeWidget(NodeWidget):
         self._refresh_title()
         self.changed.emit(self._is_runtime_change())
 
+    @override
     def DisplayTitle(self) -> str:
         title = self.GetTitle()
         if title == self._composite_type:
             return title
         return f"{title} ({self._composite_type})"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{self._composite_type} - memory {'on' if self._memory else 'off'}"
 
+    @override
     def _to_dict(self) -> dict:
         return {"memory": self._memory}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         if isinstance(data.get("memory"), bool):
             self.SetMemory(data["memory"])
@@ -886,19 +916,24 @@ class RootNodeWidget(CompositeNodeWidget):
     def __init__(self, composite_type: str = SEQUENCE, memory: bool = True, parent: QWidget | None = None):
         super().__init__(composite_type, memory, parent)
 
+    @override
     def _default_title(self) -> str:
         return "Root"
 
     @classmethod
+    @override
     def HasParentConnection(cls) -> bool:
         return False
 
+    @override
     def GetTypeName(self) -> str:
         return "Root"
 
+    @override
     def _to_dict(self) -> dict:
         return {"composite": self._composite_type, "memory": self._memory}
 
+    @override
     def _load_dict(self, data: dict) -> None:
         if data.get("composite") in COMPOSITE_TYPES:
             self.SetCompositeType(data["composite"])
@@ -918,13 +953,16 @@ class NegationNodeWidget(NodeWidget):
     _title = NEGATION
 
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return True
 
     @classmethod
+    @override
     def MaxChildren(cls) -> int | None:
         return 1
 
+    @override
     def GetTypeName(self) -> str:
         return NEGATION
 
@@ -933,10 +971,12 @@ class NegationNodeWidget(NodeWidget):
         children = self.GetChildren()
         return children[0] if children else None
 
+    @override
     def DisplayTitle(self) -> str:
         title = self.GetTitle()
         return title if title == NEGATION else f"{title} ({NEGATION})"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"{NEGATION} - succeeds when its child fails and fails when its child succeeds"
 
@@ -1027,6 +1067,7 @@ class LeafNodeWidget(NodeWidget):
         return container
 
     @classmethod
+    @override
     def HasChildConnections(cls) -> bool:
         return False
 
@@ -1059,6 +1100,7 @@ class LeafNodeWidget(NodeWidget):
         """
 
     # ------------------------------------------------------------------ fields ui
+    @override
     def _refresh_all_fields(self) -> None:
         self._rebuild_fields()
 
@@ -1165,6 +1207,7 @@ class LeafNodeWidget(NodeWidget):
         self.fieldEdited.emit(key)
         self.changed.emit(False)
 
+    @override
     def _refresh_field_editor(self, key: str) -> None:
         with self._lock:
             value = self._fields.get(key, _MISSING)
@@ -1205,6 +1248,7 @@ class LeafNodeWidget(NodeWidget):
         return self._keys.get(key)
 
     # ------------------------------------------------------------------ persistence
+    @override
     def _to_dict(self) -> dict:
         with self._lock:
             fields = dict(self._fields)
@@ -1218,6 +1262,7 @@ class LeafNodeWidget(NodeWidget):
             data["field_selections"] = selections
         return data
 
+    @override
     def _load_dict(self, data: dict) -> None:
         """Apply saved field values over the class defaults.
 
@@ -1268,21 +1313,27 @@ class UnknownLeafNodeWidget(LeafNodeWidget):
         self._raw_selections: dict = {}  # saved field_selections (kept as saved)
         super().__init__(parent)
 
+    @override
     def _default_title(self) -> str:
         return self._unknown_type
 
+    @override
     def GetTypeName(self) -> str:
         return self._unknown_type
 
+    @override
     def DisplayTitle(self) -> str:
         return f"{self.GetTitle()} (unknown type)"
 
+    @override
     def _title_tooltip(self) -> str:
         return f"Node type {self._unknown_type!r} is not registered with this BehaviorTreeWidget (unknown type)"
 
+    @override
     def OnRun(self, tree):
         raise RuntimeError(f"node type {self._unknown_type!r} is not registered")
 
+    @override
     def _load_dict(self, data: dict) -> None:
         saved = data.get("fields")
         selections = data.get("field_selections")

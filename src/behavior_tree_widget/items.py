@@ -3,7 +3,7 @@ selection rectangle (internal; :mod:`.canvas` re-exports them)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
@@ -63,6 +63,7 @@ class NodeItem(QGraphicsProxyWidget):
     def _on_geometry_changed(self) -> None:
         self.view._on_node_geometry(self.node)
 
+    @override
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
         super().paint(painter, option, widget)  # type: ignore[arg-type]  # Qt passes no widget when painting off screen
         selected = self.view.is_node_selected(self.node)
@@ -155,10 +156,12 @@ class ConnectionItem(QGraphicsPathItem):
         self._line_pen = pen
 
     # ------------------------------------------------------------------ geometry
+    @override
     def path(self) -> QPainterPath:
         """The connection curve, from the parent's ChildConnections label to the child's ParentConnection label."""
         return QPainterPath(self._curve)
 
+    @override
     def pen(self) -> QPen:
         """The pen the line is drawn with (blue, green and wider when selected)."""
         return QPen(self._line_pen)
@@ -205,6 +208,7 @@ class ConnectionItem(QGraphicsPathItem):
         return QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
 
     # ------------------------------------------------------------------ painting
+    @override
     def paint(self, painter: QPainter, option, widget: QWidget | None = None) -> None:
         exposed = option.exposedRect  # an invalid rect: not known, paint everything
         if (

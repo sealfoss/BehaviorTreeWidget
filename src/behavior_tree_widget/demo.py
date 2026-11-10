@@ -11,6 +11,7 @@ import logging
 import random
 import sys
 import time
+from typing import override
 
 from PySide6.QtCore import QFile
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox
@@ -26,6 +27,7 @@ class Wait(LeafNodeWidget):
     _title = "Wait"
     _fields = {"seconds": 1.0}
 
+    @override
     def OnRun(self, tree):
         deadline = time.monotonic() + max(0.0, self.GetField("seconds"))
         while time.monotonic() < deadline:
@@ -42,6 +44,7 @@ class LogMessage(LeafNodeWidget):
     _fields = {"message": "Hello from the behavior tree!", "level": ["INFO", "WARNING", "ERROR"]}
     RUN_IN_THREAD = False  # quick, runs on the GUI thread
 
+    @override
     def OnRun(self, tree):
         level = getattr(logging, self.GetFieldSelection("level"), logging.INFO)
         message = self.GetField("message")
@@ -57,6 +60,7 @@ class IncrementCounter(LeafNodeWidget):
     _fields = {"entry": "counter", "step": 1}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         name = self.GetField("entry")
         value = tree.GetEntry(name) if tree.HasEntry(name) else 0
@@ -71,6 +75,7 @@ class CounterAtLeast(LeafNodeWidget):
     _fields = {"entry": "counter", "threshold": 3}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         name = self.GetField("entry")
         return tree.HasEntry(name) and tree.GetEntry(name) >= self.GetField("threshold")
@@ -83,6 +88,7 @@ class RandomOutcome(LeafNodeWidget):
     _fields = {"success_probability": 0.5}
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         return random.random() < self.GetField("success_probability")
 
@@ -100,6 +106,7 @@ class MoveTo(LeafNodeWidget):
         "label": "target",
     }
 
+    @override
     def OnRun(self, tree):
         position = tree.GetEntry("position") if tree.HasEntry("position") else [0.0, 0.0]
         target = [self.GetField("x"), self.GetField("y")]
@@ -124,6 +131,7 @@ class Fail(LeafNodeWidget):
     _title = "Fail"
     RUN_IN_THREAD = False
 
+    @override
     def OnRun(self, tree):
         return False
 
@@ -135,9 +143,11 @@ class RunningTicks(LeafNodeWidget):
     _fields = {"ticks": 3}
     RUN_IN_THREAD = False
 
+    @override
     def OnStart(self, tree):
         self._remaining = self.GetField("ticks")
 
+    @override
     def OnRun(self, tree):
         if self._remaining > 0:
             self._remaining -= 1
@@ -171,6 +181,7 @@ class DemoWindow(QMainWindow):
             )
         self.resize(1000, 720)
 
+    @override
     def closeEvent(self, event):
         if not self.tree.ConfirmDiscardChanges():
             event.ignore()

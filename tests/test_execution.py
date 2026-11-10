@@ -617,6 +617,8 @@ def test_empty_root_with_disconnected_nodes(qtbot, bt):
 def test_node_status_values_are_the_four_documented_strings():
     assert [status.value for status in NodeStatus] == [READY, RUNNING, SUCCEEDED, FAILED]
     assert str(NodeStatus.SUCCEEDED) == SUCCEEDED
+    assert f"{NodeStatus.FAILED}" == FAILED
+    assert NodeStatus.RUNNING == RUNNING and NodeStatus(RUNNING) is NodeStatus.RUNNING
     assert NodeStatus.from_py_trees(Status.RUNNING) is NodeStatus.RUNNING
     assert NodeStatus.from_py_trees(Status.SUCCESS) is NodeStatus.SUCCEEDED
     assert NodeStatus.from_py_trees(Status.FAILURE) is NodeStatus.FAILED

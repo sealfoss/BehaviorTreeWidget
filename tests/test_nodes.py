@@ -26,6 +26,7 @@ import uuid
 from importlib import resources
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QWheelEvent
 from PySide6.QtTest import QTest
@@ -1207,6 +1208,47 @@ def test_get_children_orders_left_to_right(bt):
     for node in (right, left, middle):
         bt.Connect(root, node)
     assert root.GetChildren() == [left, middle, right]
+
+
+def test_running_the_tree_keeps_the_order_of_siblings(qtbot, bt):
+    """The status texts are wider than "Ready": a node sized for "Ready" would grow while it
+    runs, which moves its centre, and the centres order siblings (ties: the higher node first)."""
+    root = bt.GetRootNode()
+    root.SetCompositeType("Selector")
+    upper = bt.AddNode(Succeed, 0, 250)
+    lower = bt.AddNode(Succeed, 0, 450)
+    for node in (upper, lower):
+        bt.Connect(root, node)
+    sizes = [node.size() for node in (upper, lower)]
+    fast_config(bt)
+    bt.Execute()
+    run_until_idle(qtbot, bt)
+    QApplication.processEvents()
+    assert upper.GetStatus() is NodeStatus.SUCCEEDED and lower.GetStatus() is NodeStatus.READY
+    assert [node.size() for node in (upper, lower)] == sizes
+    assert root.GetChildren() == [upper, lower]
+
+
+@pytest.mark.parametrize("status", list(NodeStatus))
+def test_a_node_has_room_for_every_status_text(bt, status):
+    node = bt.AddNode(Succeed, 0, 250)
+    label = node._status_label
+    node._set_status(status)
+    label.ensurePolished()
+    assert label.minimumWidth() >= label.sizeHint().width()
+
+
+def test_a_removed_node_cannot_be_added_again(qtbot, bt, make_widget):
+    node = bt.AddNode(Succeed, 0, 250)
+    bt.RemoveNode(node)
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        bt.AddNode(node, 100, 250)
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        make_widget().AddNode(node, 100, 250)
+    assert node not in bt.GetNodes()
+    qtbot.waitUntil(lambda: not shiboken6.isValid(node), timeout=3000)  # deleted with its old item
+    with pytest.raises(ValueError, match="was removed from a tree"):
+        bt.AddNode(node, 100, 250)
 
 
 def test_get_children_ties_broken_top_first(bt):

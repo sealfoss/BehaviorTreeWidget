@@ -15,9 +15,9 @@ import functools
 import logging
 import os
 import threading
-import warnings
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any, cast, override
+from warnings import deprecated
 
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QPointF, QSignalBlocker, Qt, QTimer, Signal
@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from ._common import TREE_FILE_FILTER, file_key
 from ._ui import load_ui
-from .blackboard import BlackboardStore, BlackboardView
+from .blackboard import BlackboardSnapshot, BlackboardStore, BlackboardView
 from .blackboard_file import SAVE_ERRORS, BlackboardFileWriter
 from .canvas import TreeView, clamp_to_scene
 from .clipboard import CLIPBOARD_FORMAT, CLIPBOARD_MIME_TYPE, copy_nodes, paste_nodes
@@ -104,12 +104,6 @@ BUTTON_GLYPHS = {
     "Configure": "⚙︎",
 }
 SYMBOL_FONTS = ["Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols2", "Noto Sans Symbols", "Apple Symbols"]
-
-
-def _deprecated_accessor(old: str, new: str) -> None:
-    warnings.warn(
-        f"BehaviorTreeWidget.{old}() is deprecated; use {new}() instead", DeprecationWarning, stacklevel=3
-    )
 
 
 def _cleanup_after_destroy(store: BlackboardStore, executor: TreeExecutor, log_closer) -> None:
@@ -301,6 +295,12 @@ class BehaviorTreeWidget(QTabWidget):
         view.nodeAdded.connect(self._on_node_added)
         view.nodeSelectionChanged.connect(self.nodeSelectionChanged)
 
+    def _disconnect_view(self, view: TreeView) -> None:
+        """Stop following a view of a sub-tree that is closed (see :meth:`_connect_view`)."""
+        view.modified.disconnect(self._on_view_modified)
+        view.nodeAdded.disconnect(self._on_node_added)
+        view.nodeSelectionChanged.disconnect(self.nodeSelectionChanged)
+
     # ================================================================== node types
     def RegisterNodeType(self, cls: type[LeafNodeWidget]) -> None:
         """Make the leaf node class ``cls`` available in this widget (menu and loading).
@@ -366,6 +366,8 @@ class BehaviorTreeWidget(QTabWidget):
         is registered automatically).
 
         Raises:
+            ValueError: ``node_type`` is an unknown name or a Root, or a node that is part of a
+                tree or was removed from one (:meth:`RemoveNode` deletes it).
             RuntimeError: the tree is executing.
         """
         self._require_gui_thread("AddNode")
@@ -394,7 +396,10 @@ class BehaviorTreeWidget(QTabWidget):
         return node
 
     def RemoveNode(self, node: NodeWidget) -> None:
-        """Delete ``node`` (the root cannot be deleted). Raises RuntimeError while executing."""
+        """Delete ``node`` (the root cannot be deleted; a removed node cannot be added again).
+
+        Raises RuntimeError while executing.
+        """
         self._require_gui_thread("RemoveNode")
         self._view.remove_node(node)
 
@@ -954,25 +959,26 @@ class BehaviorTreeWidget(QTabWidget):
         """The "Loop Execution" check box of the execution controls."""
         return self._loop_box
 
-    # Names of the accessors before 0.9.0 (deprecated).
+    # Names of the accessors before 0.9.0. @deprecated warns at run time and marks them for
+    # type checkers and editors.
+    @deprecated("BehaviorTreeWidget.mainView() is deprecated; use main_view() instead")
     def mainView(self) -> TreeView:
-        _deprecated_accessor("mainView", "main_view")
         return self.main_view()
 
+    @deprecated("BehaviorTreeWidget.blackboardView() is deprecated; use blackboard_view() instead")
     def blackboardView(self) -> BlackboardView:
-        _deprecated_accessor("blackboardView", "blackboard_view")
         return self.blackboard_view()
 
+    @deprecated("BehaviorTreeWidget.blackboardStore() is deprecated; use blackboard_store() instead")
     def blackboardStore(self) -> BlackboardStore:
-        _deprecated_accessor("blackboardStore", "blackboard_store")
         return self.blackboard_store()
 
+    @deprecated("BehaviorTreeWidget.treeLogger() is deprecated; use tree_logger() instead")
     def treeLogger(self) -> TreeLogger:
-        _deprecated_accessor("treeLogger", "tree_logger")
         return self.tree_logger()
 
+    @deprecated("BehaviorTreeWidget.loopExecutionCheckBox() is deprecated; use loop_execution_check_box() instead")
     def loopExecutionCheckBox(self) -> QCheckBox:
-        _deprecated_accessor("loopExecutionCheckBox", "loop_execution_check_box")
         return self.loop_execution_check_box()
 
     # ================================================================== internals: dialogs
@@ -1156,6 +1162,7 @@ class BehaviorTreeWidget(QTabWidget):
             name = " > ".join(names).replace("[*]", "[*][*]")
             self.window().setWindowTitle(self.WINDOW_TITLE_FORMAT.format(filename=name))
 
+    @override
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # The widget may have been embedded in its window after the tree was loaded.
@@ -1170,6 +1177,7 @@ class BehaviorTreeWidget(QTabWidget):
         # The user panned or zoomed: never jump back to a pending target.
         self._view_target_pending = False
 
+    @override
     def closeEvent(self, event) -> None:
         if self.isWindow():
             self._blackboard_file.flush()
@@ -1549,6 +1557,9 @@ class BehaviorTreeWidget(QTabWidget):
         view = level.view
         self._frame_layout.removeWidget(view)
         view.hide()
+        # Clearing deselects its nodes: that is not a selection change of the tree shown next
+        # (_after_zoom_change reports that one).
+        self._disconnect_view(view)
         view.clear()
         view.deleteLater()
         shown = self._view
@@ -1610,8 +1621,11 @@ class BehaviorTreeWidget(QTabWidget):
                 store.replace(name, type_name, value)
                 store.set_reset(name, name in plan.resets)
             store.reorder(wanted + kept)
+        # Default group names count on from the highest one in this tree, even once its groups are
+        # deleted: a group's name becomes a file name when it is promoted to a sub-tree.
+        numbers = [default_group_number(node.GetTitle()) for node, _ in plan.nodes if isinstance(node, GroupNodeWidget)]
         install_nodes(view, plan)
-        self._group_counter = 0  # default group names count from the groups of this tree
+        self._group_counter = max([number for number in numbers if number is not None], default=0)
         view.set_zoom(plan.zoom if plan.zoom is not None else 1.0)
         self._set_view_target(plan.center)
 
@@ -1679,18 +1693,18 @@ class BehaviorTreeWidget(QTabWidget):
             return
         plan.blackboard, plan.resets, _ = BlackboardStore.parse_items(items)
 
-    def _snapshot_current(self) -> tuple[dict | None, list | None, list[str]]:
-        """The tree itself, its blackboard and its Reset flags, to put back if installing another
-        tree fails (``(None, None, [])`` when there is nothing to put back)."""
+    def _snapshot_current(self) -> tuple[dict | None, BlackboardSnapshot | None]:
+        """The tree itself and its blackboard (with the Reset flags), to put back if installing
+        another tree fails (``(None, None)`` when there is nothing to put back)."""
         if not self._main_view.nodes():
-            return None, None, []
+            return None, None
         try:
-            return self._tree_data(quiet=True), self._blackboard.snapshot(), self._blackboard.reset_names()
+            return self._tree_data(quiet=True), self._blackboard.snapshot()
         except Exception:
             log.debug("could not snapshot the current tree", exc_info=True)
-            return None, None, []
+            return None, None
 
-    def _restore_previous(self, tree: dict | None, blackboard: list | None, resets: list[str]) -> None:
+    def _restore_previous(self, tree: dict | None, blackboard: BlackboardSnapshot | None) -> None:
         """Put back the tree taken by :meth:`_snapshot_current` (installing another one failed)."""
         if tree is None:
             return
@@ -1698,9 +1712,6 @@ class BehaviorTreeWidget(QTabWidget):
             self._install_plan(prepare_tree(tree, [], self._registry))
             if blackboard is not None:
                 self._blackboard.restore(blackboard)
-                for name in resets:
-                    if self._blackboard.has(name):
-                        self._blackboard.set_reset(name, True)
         except Exception:
             log.exception("could not restore the previous tree")
 

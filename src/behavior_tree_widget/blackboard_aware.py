@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import shiboken6
 from PySide6.QtCore import QSignalBlocker, Qt
@@ -211,6 +211,7 @@ class BlackboardAwareLeaf(LeafNodeWidget):
         super().__init__(parent)
 
     # ------------------------------------------------------------------ blackboard
+    @override
     def _on_added_to_tree(self) -> None:
         tree = self._tree
         store = tree.blackboard_store() if tree is not None else None
@@ -270,9 +271,11 @@ class BlackboardAwareLeaf(LeafNodeWidget):
         self._request_refresh()
 
     # ------------------------------------------------------------------ editors
+    @override
     def _refresh_all_fields(self) -> None:
         self._refresh_editors()
 
+    @override
     def _refresh_field_editor(self, key: str) -> None:
         self._refresh_editors()
 
